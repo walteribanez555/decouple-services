@@ -48,7 +48,23 @@ export const SYSTEM_PROMPT =
   '   A date is only valid when ALL THREE components — day, month, AND year — are fully readable. ' +
   '   If the year is cut off or hidden (e.g. you can read "10/31/" but not the year) ' +
   '   that counts as an unreadable date: set dob to "" and is_adult to false. ' +
-  '   Partial dates are treated identically to missing dates — no exceptions.';
+  '   Partial dates are treated identically to missing dates — no exceptions.\n' +
+  '7. Any document that contains ANY of the following indicators is NOT a real government-issued ' +
+  '   identity document and must have is_identity_document set to false and appears_authentic set ' +
+  '   to false, regardless of any other content:\n' +
+  '   - Words or phrases such as "MOCK", "SPECIMEN", "SAMPLE", "VOID", "FAKE", "TEST", ' +
+  '     "TESTING ONLY", "FOR TRAINING", "NOT VALID", "NOT REAL", or similar invalidating marks ' +
+  '     anywhere on the document.\n' +
+  '   - Placeholder photo areas (e.g. grey boxes, silhouettes, text like "PHOTO HOLDER", ' +
+  '     "INSERT PHOTO", "REPLACE FOR TESTING") instead of an actual human photograph.\n' +
+  '   - An obviously patterned or placeholder ID/license number ' +
+  '     (e.g. A00-000-0000, 000-000-0000, 123-456-7890, repeating digits, or all-zeros).\n' +
+  '   - An issuing jurisdiction that does not correspond to any real country, ' +
+  '     real U.S. state, or recognized government entity ' +
+  '     (e.g. "State of Fictionalia", "Republic of Testland").\n' +
+  '   - Any banner, watermark, or label indicating the person is a minor ' +
+  '     (e.g. "UNDER 18", "MINOR") — treat is_adult as false in that case even if the ' +
+  '     calculated age from DOB appears to be ≥ 18.';
 
 export const USER_PROMPT =
   'Analyze this image. Return ONLY valid JSON — no markdown, no explanation, no code fences.\n\n' +
