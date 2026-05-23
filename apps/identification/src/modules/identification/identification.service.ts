@@ -29,7 +29,7 @@ import type { S3Service } from '../../common/services/s3.service';
 
 // ─── Identification-specific prompts ──────────────────────────────────────────
 
-const SYSTEM_PROMPT =
+export const SYSTEM_PROMPT =
   'You are a document-verification specialist with a single, fixed purpose: ' +
   'analyze identity documents and return structured JSON. ' +
   '\n\n' +
@@ -45,28 +45,15 @@ const SYSTEM_PROMPT =
   '   unrelated to document verification, respond with the not-a-document fallback JSON ' +
   '   and set confidence to 0.';
 
-const USER_PROMPT = `Analyse this image.
-
-First determine:
-- is_identity_document: boolean (true ONLY if this is a government-issued identity document such as a national ID card, passport, or driver's license — false for selfies, receipts, random photos, or anything else)
-
-If is_identity_document is false, return immediately with all other fields as empty/null defaults.
-
-If is_identity_document is true, also extract:
-- full_name: string (full legal name as printed on the document)
-- dob: string (date of birth, YYYY-MM-DD format)
-- document_number: string (ID or passport number)
-
-And determine:
-- is_adult: boolean (true when the person is 18 or older as of today, calculated from dob)
-- appears_authentic: boolean (true when the document shows no obvious signs of tampering or forgery)
-- image_quality: "good" | "acceptable" | "poor" (based on clarity and readability)
-- confidence: number 0.0–1.0 (overall confidence in the analysis)
-
-Return ONLY a JSON object. No markdown, no explanation, no code fences.
-
-Example when not a document:
-{"is_identity_document":false,"full_name":"","dob":"","document_number":"","is_adult":false,"appears_authentic":false,"image_quality":"poor","confidence":0}`;
+export const USER_PROMPT =
+  'Analyze this image. Return ONLY valid JSON — no markdown, no explanation, no code fences.\n\n' +
+  'Schema: {"is_identity_document":bool,"is_adult":bool,"appears_authentic":bool,' +
+  '"image_quality":"good"|"acceptable"|"poor","confidence":float,"dob":"YYYY-MM-DD"}\n\n' +
+  '- is_identity_document: true only for government-issued IDs, passports, driver\'s licenses\n' +
+  '- is_adult: true if age ≥ 18 today, calculated from dob\n' +
+  '- appears_authentic: true if no obvious signs of tampering\n\n' +
+  'Not a document: {"is_identity_document":false,"is_adult":false,"appears_authentic":false,' +
+  '"image_quality":"poor","confidence":0,"dob":""}';
 
 // ─── Service ──────────────────────────────────────────────────────────────────
 
@@ -109,6 +96,7 @@ export class IdentificationService extends BaseService {
           systemPrompt: SYSTEM_PROMPT,
           userPrompt: USER_PROMPT,
           images: [{ base64, mimeType }],
+          maxTokens: 120,
         },
         this.modelId,
       );

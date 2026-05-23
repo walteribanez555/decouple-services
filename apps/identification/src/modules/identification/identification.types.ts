@@ -38,10 +38,6 @@ export interface PresignResponse {
 export interface DocumentAnalysis {
   /** False when the image is not a government-issued identity document at all. */
   is_identity_document: boolean;
-  full_name: string;
-  /** YYYY-MM-DD */
-  dob: string;
-  document_number: string;
   /** True when calculated age ≥ 18 today. */
   is_adult: boolean;
   /** True when no obvious signs of tampering. */
@@ -49,6 +45,8 @@ export interface DocumentAnalysis {
   image_quality: 'good' | 'acceptable' | 'poor';
   /** Model confidence 0.0 – 1.0. */
   confidence: number;
+  /** YYYY-MM-DD */
+  dob: string;
 }
 
 // ── Verification response ─────────────────────────────────────────────────────
