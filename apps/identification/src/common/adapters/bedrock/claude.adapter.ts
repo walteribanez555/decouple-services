@@ -5,7 +5,7 @@
  * `anthropic_version / messages` payload, and extracts the text from the
  * `content[0].text` response field.
  *
- * Supports: claude-3-haiku, claude-3-sonnet, claude-3-5-sonnet, claude-3-opus
+ * Supports: claude-haiku-4-5, claude-sonnet-4-5, claude-sonnet-4-6, claude-opus-4-x
  * and any future model that follows the same Messages API contract.
  */
 
@@ -17,7 +17,7 @@ import type {
 export class ClaudeAdapter implements IBedrockAdapter {
   readonly defaultModelId: string;
 
-  constructor(modelId = 'anthropic.claude-3-5-sonnet-20241022-v2:0') {
+  constructor(modelId = 'anthropic.claude-sonnet-4-5-20250929-v1:0') {
     this.defaultModelId = modelId;
   }
 

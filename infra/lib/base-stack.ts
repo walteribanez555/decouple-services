@@ -145,10 +145,10 @@ export class DecoupleServicesStack extends cdk.Stack {
       new iam.PolicyStatement({
         sid: "AllowBedrockInvokeModel",
         actions: ["bedrock:InvokeModel"],
-        // Wildcard covers both v1 and v2 of the Sonnet model; restrict to a
+        // Wildcard covers all Claude Sonnet 4.x versions; restrict to a
         // specific version in the BEDROCK_MODEL_ID env var if needed.
         resources: [
-          `arn:aws:bedrock:${this.region}::foundation-model/anthropic.claude-3-5-sonnet*`,
+          `arn:aws:bedrock:${this.region}::foundation-model/anthropic.claude-sonnet-4*`,
         ],
       }),
     );
@@ -183,7 +183,7 @@ export class DecoupleServicesStack extends cdk.Stack {
         LOG_LEVEL:    appSecret.secretValueFromJson("LOG_LEVEL").unsafeUnwrap(),
         // ── Age-verification ────────────────────────────────────────────────
         S3_VERIFICATION_BUCKET: verificationBucket.bucketName,
-        BEDROCK_MODEL_ID: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        BEDROCK_MODEL_ID: "anthropic.claude-sonnet-4-5-20250929-v1:0",
         CONFIDENCE_THRESHOLD: "0.85",
         // Caller can pass extra non-sensitive vars (e.g. feature flags).
         ...props.lambdaEnvironmentVariables,

@@ -1,8 +1,12 @@
 {
   "name": "mobile",
+  "version": "0.1.0",
+  "private": true,
   "scripts": {
     "dev": "flutter run",
     "build": "flutter build apk",
+    "build:android": "flutter build apk --release",
+    "build:ios": "flutter build ipa --release",
     "analyze": "flutter analyze",
     "test": "flutter test"
   }
