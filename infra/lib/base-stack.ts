@@ -4,6 +4,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as lambdaNodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
 import * as path from "path";
 
@@ -31,8 +32,9 @@ export interface DecoupleServicesStackProps extends cdk.StackProps {
   apiGwLogRetentionDays?: logs.RetentionDays;
 
   /**
-   * Environment variables injected into the Lambda function at runtime.
-   * Corresponds to `var.lambda_environment_variables` in Terraform.
+   * Extra (non-sensitive) environment variables injected into the Lambda.
+   * Sensitive values (DATABASE_URL, etc.) are stored in AWS Secrets Manager
+   * and fetched by the Lambda at cold start via APP_SECRET_ARN.
    */
   lambdaEnvironmentVariables?: Record<string, string>;
 }
@@ -87,6 +89,33 @@ export class DecoupleServicesStack extends cdk.Stack {
     });
 
     // ─────────────────────────────────────────────────────────────────────────
+    // AWS Secrets Manager — app configuration secret
+    //
+    // Stores sensitive runtime values (DATABASE_URL, CORS_ORIGINS, LOG_LEVEL).
+    // No resource policy is attached, so any IAM principal in the account with
+    // secretsmanager:GetSecretValue can read it.
+    //
+    // After first deploy, populate the real values:
+    //   aws secretsmanager put-secret-value \
+    //     --secret-id decouple-services/{env}/app \
+    //     --secret-string '{"DATABASE_URL":"postgresql://...","CORS_ORIGINS":"*","LOG_LEVEL":"info"}'
+    // ─────────────────────────────────────────────────────────────────────────
+    const appSecret = new secretsmanager.Secret(this, "AppSecret", {
+      secretName: `decouple-services/${this.appEnv}/app`,
+      description: `Runtime configuration for decouple-services Lambda (${this.appEnv})`,
+      // Placeholder JSON — replace values via AWS CLI or Console after deployment.
+      secretObjectValue: {
+        DATABASE_URL: cdk.SecretValue.unsafePlainText("PLACEHOLDER_REPLACE_ME"),
+        CORS_ORIGINS: cdk.SecretValue.unsafePlainText("*"),
+        LOG_LEVEL:    cdk.SecretValue.unsafePlainText(isProd ? "warn" : "debug"),
+      },
+      removalPolicy: isProd ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+    });
+
+    // Grant the Lambda execution role read access to the secret.
+    appSecret.grantRead(lambdaRole);
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Lambda function
     // Terraform: aws_lambda_function.app
     //   runtime  = nodejs22.x
@@ -103,7 +132,14 @@ export class DecoupleServicesStack extends cdk.Stack {
       role: lambdaRole,
       timeout: cdk.Duration.seconds(10),
       memorySize: 512,
-      environment: props.lambdaEnvironmentVariables ?? {},
+      environment: {
+        // Non-sensitive config injected directly.
+        NODE_ENV: isProd ? "production" : "development",
+        // ARN passed to Lambda so it can fetch the full secret at cold start.
+        APP_SECRET_ARN: appSecret.secretArn,
+        // Caller can pass extra non-sensitive vars (e.g. feature flags).
+        ...props.lambdaEnvironmentVariables,
+      },
       logGroup: lambdaLogGroup,
       // Mirrors apps/identification/esbuild.config.js
       bundling: {
@@ -241,6 +277,21 @@ export class DecoupleServicesStack extends cdk.Stack {
       value: this.lambdaFn.functionArn,
       description: "Lambda function ARN",
       exportName: `${serviceName}-lambda-arn`,
+    });
+
+    new cdk.CfnOutput(this, "AppSecretArn", {
+      value: appSecret.secretArn,
+      description: "Secrets Manager secret ARN — update values here after first deploy",
+      exportName: `${serviceName}-secret-arn`,
+    });
+
+    new cdk.CfnOutput(this, "AppSecretUpdateCommand", {
+      value: [
+        `aws secretsmanager put-secret-value`,
+        `--secret-id decouple-services/${this.appEnv}/app`,
+        `--secret-string '{"DATABASE_URL":"postgresql://user:pass@host:5432/db","CORS_ORIGINS":"*","LOG_LEVEL":"${isProd ? "warn" : "debug"}"}'`,
+      ].join(" \\\n  "),
+      description: "CLI command to populate the secret after deployment",
     });
   }
 }

@@ -1,0 +1,24 @@
+name: Production Release
+
+# One-click production deploy from the GitHub Actions UI.
+# Calls cicd.yml with environment=prod.
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Version tag (e.g. v1.5.0). Leave empty to auto-bump minor."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  deploy-prod:
+    name: Deploy to production
+    uses: ./.github/workflows/cicd.yml
+    with:
+      environment: prod
+      tag_name: ${{ inputs.tag_name }}
+    secrets: inherit

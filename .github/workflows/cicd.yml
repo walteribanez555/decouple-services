@@ -1,0 +1,395 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: false
+        default: "dev"
+        type: choice
+        options: [dev, prod]
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      tag_name:
+        required: false
+        type: string
+        default: ""
+
+# One deployment at a time per environment — queue, never cancel.
+concurrency:
+  group: deploy-${{ inputs.environment || (startsWith(github.ref, 'refs/tags/v') && 'prod' || 'dev') }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write       # create tags + GitHub Releases
+  pull-requests: read
+
+env:
+  AWS_DEFAULT_REGION: us-east-1
+  NODE_VERSION: "22"
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+jobs:
+  # ─── 1. Detect changes & environment ───────────────────────────────────────
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      services:     ${{ steps.filter.outputs.services }}
+      infra:        ${{ steps.filter.outputs.infra }}
+      infra_drift:  ${{ steps.drift.outputs.drift }}
+      environment:  ${{ steps.ctx.outputs.environment }}
+      stack_name:   ${{ steps.ctx.outputs.stack_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── Resolve environment & stack name ──────────────────────────────────
+      - name: Resolve environment context
+        id: ctx
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || \
+                "${{ github.event_name }}" == "workflow_call" ]]; then
+            ENV="${{ inputs.environment }}"
+            ENV="${ENV:-dev}"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            ENV="prod"
+          else
+            ENV="dev"
+          fi
+
+          if [[ "$ENV" == "prod" ]]; then
+            STACK="DecoupleServicesStack-Prod"
+          else
+            STACK="DecoupleServicesStack-Dev"
+          fi
+
+          echo "environment=$ENV"  >> "$GITHUB_OUTPUT"
+          echo "stack_name=$STACK" >> "$GITHUB_OUTPUT"
+          echo "Resolved: env=$ENV  stack=$STACK"
+
+      # ── Detect what files changed ─────────────────────────────────────────
+      - name: Path filter
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            infra:
+              - 'infra/**'
+            services:
+              - 'apps/**'
+              - 'packages/**'
+
+      # ── CDK drift check (skip on PRs — no secrets available) ─────────────
+      - name: Install infra deps (for drift check)
+        if: github.event_name != 'pull_request'
+        run: npm ci
+        working-directory: infra
+
+      - name: Install app deps (needed for Lambda bundling during diff)
+        if: github.event_name != 'pull_request'
+        run: npm ci
+        working-directory: apps/identification
+
+      - name: CDK drift check
+        id: drift
+        if: github.event_name != 'pull_request'
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          # If the stack hasn't been deployed yet, treat it as drift so we deploy.
+          STATUS=$(aws cloudformation describe-stacks \
+            --stack-name ${{ steps.ctx.outputs.stack_name }} \
+            --query 'Stacks[0].StackStatus' --output text 2>/dev/null \
+            || echo "DOES_NOT_EXIST")
+
+          if [[ "$STATUS" == "DOES_NOT_EXIST" ]]; then
+            echo "Stack not found — first deploy, treating as drift."
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          DIFF=$(cd infra && npx cdk diff ${{ steps.ctx.outputs.stack_name }} \
+            -c environment=${{ steps.ctx.outputs.environment }} 2>&1 || true)
+
+          if echo "$DIFF" | grep -qE '\[\+\]|\[-\]|\[~\]'; then
+            echo "Drift detected."
+            echo "drift=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "No drift."
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # On PRs there's no drift check — default to false.
+      - name: Set drift=false (PR)
+        if: github.event_name == 'pull_request'
+        run: echo "drift=false" >> "$GITHUB_OUTPUT"
+        id: drift_pr
+
+  # ─── 2. Validate (PRs only) ─────────────────────────────────────────────
+  #   Name must stay exactly "validate" — used as a required status check.
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install root workspace deps
+        run: npm ci
+
+      - name: Install app deps
+        run: npm ci
+        working-directory: apps/identification
+
+      - name: Type-check app
+        run: npx tsc --noEmit
+        working-directory: apps/identification
+
+      - name: Install infra deps
+        run: npm ci
+        working-directory: infra
+
+      - name: Type-check infra
+        run: npx tsc --noEmit
+        working-directory: infra
+
+  # ─── 3. Deploy (CDK bundles Lambda + provisions all resources) ───────────
+  deploy:
+    name: Deploy → ${{ needs.changes.outputs.environment }}
+    runs-on: ubuntu-latest
+    needs: changes
+    if: |
+      github.event_name != 'pull_request' && (
+        needs.changes.outputs.infra     == 'true' ||
+        needs.changes.outputs.services  == 'true' ||
+        needs.changes.outputs.infra_drift == 'true' ||
+        github.event_name == 'workflow_dispatch' ||
+        github.event_name == 'workflow_call'
+      )
+    environment: ${{ needs.changes.outputs.environment }}
+    env:
+      # ── AWS credentials ───────────────────────────────────────────────────
+      AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      # ── GitHub Environment secrets ────────────────────────────────────────
+      # Stored per-environment in GitHub (Settings → Environments → dev/prod).
+      # After CDK deploy, these are synced into AWS Secrets Manager so the
+      # Lambda can read them at cold start.
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+      LOG_LEVEL:    ${{ secrets.LOG_LEVEL }}
+    outputs:
+      api_url: ${{ steps.endpoint.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Install workspace deps first — esbuild needs hono etc. when bundling Lambda
+      - name: Install root workspace deps
+        run: npm ci
+
+      - name: Install app deps
+        run: npm ci
+        working-directory: apps/identification
+
+      - name: Install infra deps
+        run: npm ci
+        working-directory: infra
+
+      # ── Shared stack ──────────────────────────────────────────────────────
+      - name: Ensure shared stack is deployed
+        working-directory: infra
+        run: |
+          STATUS=$(aws cloudformation describe-stacks \
+            --stack-name DecoupleServicesSharedStack \
+            --query 'Stacks[0].StackStatus' --output text 2>/dev/null \
+            || echo "DOES_NOT_EXIST")
+
+          if [[ "$STATUS" == "DOES_NOT_EXIST" ]]; then
+            echo "Shared stack missing — deploying..."
+            npx cdk deploy DecoupleServicesSharedStack --require-approval never
+          elif [[ "$STATUS" == *ROLLBACK* || "$STATUS" == *FAILED* ]]; then
+            echo "❌ Shared stack is in '$STATUS' — manual intervention required."
+            exit 1
+          else
+            echo "✅ Shared stack already exists ($STATUS)."
+          fi
+
+      # ── Environment-specific stack ────────────────────────────────────────
+      - name: Deploy ${{ needs.changes.outputs.stack_name }}
+        working-directory: infra
+        run: |
+          npx cdk deploy ${{ needs.changes.outputs.stack_name }} \
+            -c environment=${{ needs.changes.outputs.environment }} \
+            --require-approval never
+
+      # ── Sync GitHub Environment secrets → AWS Secrets Manager ────────────
+      # CDK created the secret shell; this step writes the real values.
+      # Uses jq to build JSON safely — handles special characters in values.
+      - name: Sync secrets → AWS Secrets Manager
+        run: |
+          ENV="${{ needs.changes.outputs.environment }}"
+          SECRET_ID="decouple-services/${ENV}/app"
+
+          PAYLOAD=$(jq -n \
+            --arg db   "$DATABASE_URL" \
+            --arg cors "$CORS_ORIGINS" \
+            --arg log  "$LOG_LEVEL" \
+            '{
+              DATABASE_URL: $db,
+              CORS_ORIGINS: $cors,
+              LOG_LEVEL:    $log
+            }')
+
+          aws secretsmanager put-secret-value \
+            --secret-id "$SECRET_ID" \
+            --secret-string "$PAYLOAD"
+
+          echo "✅ Secrets synced to $SECRET_ID"
+
+      # ── Capture output URL ────────────────────────────────────────────────
+      - name: Get API endpoint
+        id: endpoint
+        run: |
+          URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ needs.changes.outputs.stack_name }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+            --output text)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "🚀 API endpoint: $URL"
+
+  # ─── 4. Post-deploy health check ────────────────────────────────────────
+  health:
+    name: Health check
+    runs-on: ubuntu-latest
+    needs: [changes, deploy]
+    if: needs.deploy.result == 'success'
+    steps:
+      - name: Wait for Lambda cold-start
+        run: sleep 5
+
+      - name: GET / (root)
+        run: |
+          URL="${{ needs.deploy.outputs.api_url }}"
+          for i in 1 2 3; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/")
+            echo "Attempt $i → HTTP $STATUS"
+            if [[ "$STATUS" == "200" ]]; then
+              echo "✅ Root endpoint healthy."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "❌ Root endpoint unreachable after 3 attempts."
+          exit 1
+
+      - name: GET /api/v1/health
+        run: |
+          URL="${{ needs.deploy.outputs.api_url }}"
+          for i in 1 2 3; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/api/v1/health")
+            echo "Attempt $i → HTTP $STATUS"
+            if [[ "$STATUS" == "200" ]]; then
+              echo "✅ Health endpoint healthy."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "❌ Health endpoint unreachable after 3 attempts."
+          exit 1
+
+  # ─── 5. Tag & GitHub Release (prod only) ────────────────────────────────
+  tag-release:
+    name: Tag & Release
+    runs-on: ubuntu-latest
+    needs: [changes, health]
+    if: needs.changes.outputs.environment == 'prod' && needs.health.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            # Triggered by a tag push — use existing tag
+            TAG="${GITHUB_REF#refs/tags/}"
+          elif [[ -n "${{ inputs.tag_name }}" ]]; then
+            # Caller provided an explicit tag
+            TAG="${{ inputs.tag_name }}"
+            git tag "$TAG"
+            git push origin "$TAG"
+          else
+            # Auto-bump minor version
+            LAST=$(git tag -l 'v*' --sort=-version:refname | head -1)
+            if [[ -z "$LAST" ]]; then
+              TAG="v1.0.0"
+            else
+              MAJOR=$(echo "$LAST" | sed 's/^v//' | cut -d. -f1)
+              MINOR=$(echo "$LAST" | cut -d. -f2)
+              TAG="v${MAJOR}.$((MINOR + 1)).0"
+            fi
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Tag: $TAG"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          PREV=$(git tag -l 'v*' --sort=-version:refname | grep -v "^${TAG}$" | head -1)
+          if [[ -z "$PREV" ]]; then
+            LOG=$(git log --pretty=format:"- %s (%h)" --no-merges | head -30)
+          else
+            LOG=$(git log "${PREV}..${TAG}" --pretty=format:"- %s (%h)" --no-merges)
+          fi
+          {
+            echo "log<<EOF"
+            echo "$LOG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name:     ${{ steps.tag.outputs.tag }}
+          release_name: ${{ steps.tag.outputs.tag }}
+          body: |
+            ## Changes
+            ${{ steps.changelog.outputs.log }}
+
+            ## Infrastructure
+            - Stack: `${{ needs.changes.outputs.stack_name }}`
+            - Account: `682079544132` · Region: `us-east-1`
+            - Commit: `${{ github.sha }}`
+          draft: false
+          prerelease: false

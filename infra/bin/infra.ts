@@ -24,6 +24,9 @@ new SharedResourcesStack(app, "DecoupleServicesSharedStack", {
 const stackName =
   environment === "prod" ? "DecoupleServicesStack-Prod" : "DecoupleServicesStack-Dev";
 
+// Sensitive values (DATABASE_URL, CORS_ORIGINS, LOG_LEVEL) are stored in
+// AWS Secrets Manager under decouple-services/{env}/app and fetched by the
+// Lambda at cold start — no secrets needed in GitHub or in this file.
 const stack = new DecoupleServicesStack(app, stackName, {
   env: { account: AWS_ACCOUNT, region: AWS_REGION },
   appEnv: environment,

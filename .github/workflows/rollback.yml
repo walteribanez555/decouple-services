@@ -1,0 +1,173 @@
+name: Production Rollback
+
+# Emergency rollback — checks out a previous release tag and redeploys via CDK.
+# The Lambda code bundled at that commit is re-uploaded; no Docker images involved.
+on:
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: "Git tag to roll back to (e.g. v1.3.0)"
+        required: true
+      reason:
+        description: "Reason for rollback (shown in job summary)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  AWS_DEFAULT_REGION: us-east-1
+  NODE_VERSION: "22"
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+jobs:
+  # ─── 1. Validate the target tag ────────────────────────────────────────────
+  validate-rollback:
+    name: Validate rollback target
+    runs-on: ubuntu-latest
+    outputs:
+      target_sha: ${{ steps.validate.outputs.target_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag
+        id: validate
+        run: |
+          TAG="${{ inputs.target_version }}"
+          REASON="${{ inputs.reason }}"
+
+          # Tag must exist
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "❌ Tag '$TAG' does not exist in this repository."
+            exit 1
+          fi
+
+          TARGET_SHA=$(git rev-parse "$TAG^{commit}")
+          CURRENT_SHA=$(git rev-parse HEAD)
+
+          # Must not already be at this version
+          if [[ "$TARGET_SHA" == "$CURRENT_SHA" ]]; then
+            echo "❌ '$TAG' is already the current HEAD — nothing to roll back."
+            exit 1
+          fi
+
+          # Tag's commit must be reachable from main (ancestor check)
+          if ! git merge-base --is-ancestor "$TARGET_SHA" origin/main; then
+            echo "❌ '$TAG' ($TARGET_SHA) is not an ancestor of main. Aborting."
+            exit 1
+          fi
+
+          echo "✅ Rollback validated: $TAG → $TARGET_SHA"
+          echo "target_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Write job summary
+        run: |
+          echo "## ⚠️ Production Rollback Initiated" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| | |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Target version** | \`${{ inputs.target_version }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Target SHA** | \`${{ steps.validate.outputs.target_sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Reason** | ${{ inputs.reason }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Triggered by** | @${{ github.actor }} |" >> "$GITHUB_STEP_SUMMARY"
+
+  # ─── 2. Execute rollback ────────────────────────────────────────────────────
+  execute-rollback:
+    name: Execute rollback → ${{ inputs.target_version }}
+    runs-on: ubuntu-latest
+    needs: validate-rollback
+    environment: prod
+    env:
+      AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    outputs:
+      api_url: ${{ steps.endpoint.outputs.url }}
+    steps:
+      # Check out the target tag — CDK will bundle the Lambda from this snapshot
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_version }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install root workspace deps
+        run: npm ci
+
+      - name: Install app deps
+        run: npm ci
+        working-directory: apps/identification
+
+      - name: Install infra deps
+        run: npm ci
+        working-directory: infra
+
+      # Redeploy with the code from the target tag
+      - name: CDK deploy (prod) from ${{ inputs.target_version }}
+        working-directory: infra
+        run: |
+          npx cdk deploy DecoupleServicesStack-Prod \
+            -c environment=prod \
+            --require-approval never
+
+      - name: Get API endpoint
+        id: endpoint
+        run: |
+          URL=$(aws cloudformation describe-stacks \
+            --stack-name DecoupleServicesStack-Prod \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+            --output text)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "🔄 Rollback API endpoint: $URL"
+
+      # Create an audit tag on the rollback event
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create audit tag
+        run: |
+          AUDIT_TAG="rollback-$(date -u +%Y%m%d-%H%M%S)"
+          git tag "$AUDIT_TAG" "${{ needs.validate-rollback.outputs.target_sha }}"
+          git push origin "$AUDIT_TAG"
+          echo "🏷️  Audit tag created: $AUDIT_TAG"
+
+  # ─── 3. Post-rollback health verification ──────────────────────────────────
+  post-rollback-health:
+    name: Post-rollback health check
+    runs-on: ubuntu-latest
+    needs: execute-rollback
+    steps:
+      - name: Wait for Lambda to stabilise
+        run: sleep 10
+
+      - name: GET /api/v1/health
+        run: |
+          URL="${{ needs.execute-rollback.outputs.api_url }}"
+          for i in 1 2 3; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/api/v1/health")
+            echo "Attempt $i → HTTP $STATUS"
+            if [[ "$STATUS" == "200" ]]; then
+              echo "✅ Service healthy after rollback to ${{ inputs.target_version }}."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "❌ Service unhealthy after rollback — investigate immediately."
+          exit 1
+
+      - name: Write rollback summary
+        if: always()
+        run: |
+          echo "## Rollback Result" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version deployed:** \`${{ inputs.target_version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Reason:** ${{ inputs.reason }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Health:** ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
