@@ -82,16 +82,21 @@ class ReviewPage extends StatelessWidget {
               const SizedBox(height: 18),
 
               // ── Photo preview ──────────────────────────────────────────
+              // Aspect ratio matches the overlay crop frame exactly:
+              //   width = screenW * 0.88,  height = screenW * 0.56  → 11 : 7
+              // The captured image has already been cropped to this region by
+              // CapturePage._cropToOverlayFrame, so BoxFit.contain shows it in
+              // full without cutting anything extra off.
               ClipRRect(
                 borderRadius: BorderRadius.circular(22),
                 child: AspectRatio(
-                  aspectRatio: 4 / 3,
+                  aspectRatio: 88 / 56, // ≈ 1.571 — matches ScannerOverlayPainter
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
                       Image.file(
                         File(imagePath),
-                        fit: BoxFit.cover,
+                        fit: BoxFit.cover, // cover handles gallery picks that weren't cropped
                       ),
                       Positioned(
                         top: 12,

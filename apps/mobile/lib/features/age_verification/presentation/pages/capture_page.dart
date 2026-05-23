@@ -1,3 +1,7 @@
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -17,7 +21,8 @@ import '../widgets/status_chip.dart';
 /// Responsibilities (mobile layer stays deliberately thin):
 ///   1. Initialize and dispose the [CameraController]
 ///   2. Display a live [CameraPreview] behind the [CameraOverlay]
-///   3. Capture → compress (quality 80) → hand the file path to the cubit
+///   3. Capture → compress (quality 80) → **crop to the overlay frame** →
+///      hand the file path to the cubit
 ///
 /// All OCR, validation, and fraud detection happen on the backend.
 class CapturePage extends StatefulWidget {
@@ -107,10 +112,13 @@ class _CapturePageState extends State<CapturePage>
     if (_capturing || !_initialized || ctrl == null) return;
     setState(() => _capturing = true);
 
+    // Snapshot screen size before any async gap so it's safe to use later.
+    final screenSize = MediaQuery.of(context).size;
+
     try {
       final XFile raw = await ctrl.takePicture();
 
-      // Compress before upload — cuts size ~40% with no OCR-visible quality loss.
+      // Compress before upload — cuts size ~40 % with no OCR-visible quality loss.
       final tempDir = await getTemporaryDirectory();
       final targetPath =
           '${tempDir.path}/doc_${DateTime.now().millisecondsSinceEpoch}.jpg';
@@ -122,11 +130,16 @@ class _CapturePageState extends State<CapturePage>
         format: CompressFormat.jpeg,
       );
 
+      final sourcePath = compressed?.path ?? raw.path;
+
+      // Crop the compressed image to match exactly what the overlay frame shows.
+      final croppedPath = await _cropToOverlayFrame(sourcePath, screenSize);
+
       if (!mounted) return;
 
       context.read<AgeVerificationCubit>().onCapture(
             docType: widget.docType,
-            imagePath: compressed?.path ?? raw.path,
+            imagePath: croppedPath ?? sourcePath,
             mimeType: 'image/jpeg',
           );
     } catch (e) {
@@ -140,6 +153,108 @@ class _CapturePageState extends State<CapturePage>
       }
     } finally {
       if (mounted) setState(() => _capturing = false);
+    }
+  }
+
+  // ── Crop to the overlay frame ────────────────────────────────────────────────
+  //
+  // The [ScannerOverlayPainter] draws its cutout as:
+  //   center  : (screenW / 2,   screenH * 0.45)
+  //   size    : (screenW * 0.88, screenW * 0.56)
+  //
+  // After [flutter_image_compress] the JPEG is orientation-normalised (EXIF
+  // applied), so the image is in the same portrait orientation the user sees.
+  // We replicate the BoxFit.cover maths from [_buildPreview] to map the
+  // on-screen cutout rectangle back to image-pixel coordinates, then use
+  // dart:ui to extract that region and re-encode to JPEG.
+  //
+  // Returns null on any error so the caller can fall back to the full image.
+  Future<String?> _cropToOverlayFrame(
+    String imagePath,
+    Size screenSize,
+  ) async {
+    try {
+      final bytes = await File(imagePath).readAsBytes();
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final image = frame.image;
+
+      try {
+        final imgW = image.width.toDouble();
+        final imgH = image.height.toDouble();
+
+        // Only handle portrait images (camera capture after normalisation).
+        // Gallery picks may be landscape — skip cropping for those.
+        if (imgW >= imgH) return null;
+
+        final screenW = screenSize.width;
+        final screenH = screenSize.height;
+
+        // ── Replicate BoxFit.cover from _buildPreview ──────────────────────
+        // The preview SizedBox has dimensions (previewSize.height × previewSize.width),
+        // then FittedBox(cover) scales it to fill the screen. After normalisation
+        // the JPEG has the same proportions as that display box, so we use the
+        // image's own pixel dimensions directly.
+        final scale = math.max(screenW / imgW, screenH / imgH);
+        final offsetX = (screenW - imgW * scale) / 2; // ≤ 0
+        final offsetY = (screenH - imgH * scale) / 2; // ≤ 0
+
+        // ── Overlay cutout in screen coordinates ───────────────────────────
+        // Matches ScannerOverlayPainter._cutoutRect exactly.
+        final cutoutCX = screenW / 2;
+        final cutoutCY = screenH * 0.45;
+        final cutoutW  = screenW * 0.88;
+        final cutoutH  = screenW * 0.56;
+
+        final screenLeft   = cutoutCX - cutoutW / 2;
+        final screenTop    = cutoutCY - cutoutH / 2;
+        final screenRight  = cutoutCX + cutoutW / 2;
+        final screenBottom = cutoutCY + cutoutH / 2;
+
+        // ── Map screen → image pixel coordinates ───────────────────────────
+        final imgLeft   = ((screenLeft   - offsetX) / scale).clamp(0.0, imgW);
+        final imgTop    = ((screenTop    - offsetY) / scale).clamp(0.0, imgH);
+        final imgRight  = ((screenRight  - offsetX) / scale).clamp(0.0, imgW);
+        final imgBottom = ((screenBottom - offsetY) / scale).clamp(0.0, imgH);
+
+        final cropW = (imgRight  - imgLeft).toInt();
+        final cropH = (imgBottom - imgTop).toInt();
+        if (cropW <= 0 || cropH <= 0) return null;
+
+        // ── Draw the cropped region onto a new canvas ──────────────────────
+        final recorder = ui.PictureRecorder();
+        Canvas(recorder).drawImageRect(
+          image,
+          Rect.fromLTWH(imgLeft, imgTop, cropW.toDouble(), cropH.toDouble()),
+          Rect.fromLTWH(0, 0, cropW.toDouble(), cropH.toDouble()),
+          Paint(),
+        );
+        final croppedImage =
+            await recorder.endRecording().toImage(cropW, cropH);
+
+        final byteData =
+            await croppedImage.toByteData(format: ui.ImageByteFormat.png);
+        croppedImage.dispose();
+        if (byteData == null) return null;
+
+        // Re-encode the PNG crop as JPEG to keep file size small.
+        final jpegBytes = await FlutterImageCompress.compressWithList(
+          byteData.buffer.asUint8List(),
+          quality: 90,
+          format: CompressFormat.jpeg,
+        );
+
+        final tempDir = await getTemporaryDirectory();
+        final croppedPath =
+            '${tempDir.path}/doc_crop_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        await File(croppedPath).writeAsBytes(jpegBytes);
+        return croppedPath;
+      } finally {
+        image.dispose();
+      }
+    } catch (_) {
+      // Any error → caller uses the full compressed image instead.
+      return null;
     }
   }
 
