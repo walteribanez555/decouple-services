@@ -91,28 +91,23 @@ export class DecoupleServicesStack extends cdk.Stack {
     // ─────────────────────────────────────────────────────────────────────────
     // AWS Secrets Manager — app configuration secret
     //
-    // Stores sensitive runtime values (DATABASE_URL, CORS_ORIGINS, LOG_LEVEL).
-    // No resource policy is attached, so any IAM principal in the account with
-    // secretsmanager:GetSecretValue can read it.
+    // The secret is created and populated by the CI/CD pipeline BEFORE this
+    // stack is deployed, so the real values are always available when
+    // CloudFormation resolves the dynamic references below.
     //
-    // After first deploy, populate the real values:
-    //   aws secretsmanager put-secret-value \
-    //     --secret-id decouple-services/{env}/app \
-    //     --secret-string '{"DATABASE_URL":"postgresql://...","CORS_ORIGINS":"*","LOG_LEVEL":"info"}'
+    // Secret name convention: decouple-services/{env}/app
+    // Keys: DATABASE_URL, CORS_ORIGINS, LOG_LEVEL
+    //
+    // CDK does NOT own the lifecycle of this secret — managing it externally
+    // prevents a chicken-and-egg problem where placeholders would be resolved
+    // into the Lambda configuration on first deploy.
     // ─────────────────────────────────────────────────────────────────────────
-    const appSecret = new secretsmanager.Secret(this, "AppSecret", {
-      secretName: `decouple-services/${this.appEnv}/app`,
-      description: `Runtime configuration for decouple-services Lambda (${this.appEnv})`,
-      // Placeholder JSON — replace values via AWS CLI or Console after deployment.
-      secretObjectValue: {
-        DATABASE_URL: cdk.SecretValue.unsafePlainText("PLACEHOLDER_REPLACE_ME"),
-        CORS_ORIGINS: cdk.SecretValue.unsafePlainText("*"),
-        LOG_LEVEL:    cdk.SecretValue.unsafePlainText(isProd ? "warn" : "debug"),
-      },
-      removalPolicy: isProd ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
-    });
+    const appSecret = secretsmanager.Secret.fromSecretNameV2(
+      this, "AppSecret", `decouple-services/${this.appEnv}/app`
+    );
 
-    // Grant the Lambda execution role read access to the secret.
+    // Grant the Lambda execution role runtime read access (useful for future
+    // rotation logic or manual secret refresh without a redeployment).
     appSecret.grantRead(lambdaRole);
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -135,8 +130,14 @@ export class DecoupleServicesStack extends cdk.Stack {
       environment: {
         // Non-sensitive config injected directly.
         NODE_ENV: isProd ? "production" : "development",
-        // ARN passed to Lambda so it can fetch the full secret at cold start.
-        APP_SECRET_ARN: appSecret.secretArn,
+        // Sensitive values — CloudFormation resolves these from Secrets Manager
+        // at deploy time using dynamic references. They become normal env vars
+        // inside the Lambda container (process.env.DATABASE_URL etc.).
+        // The CI/CD pipeline populates the secret BEFORE this stack is deployed
+        // so CloudFormation always resolves real values, never placeholders.
+        DATABASE_URL: appSecret.secretValueFromJson("DATABASE_URL").unsafeUnwrap(),
+        CORS_ORIGINS: appSecret.secretValueFromJson("CORS_ORIGINS").unsafeUnwrap(),
+        LOG_LEVEL:    appSecret.secretValueFromJson("LOG_LEVEL").unsafeUnwrap(),
         // Caller can pass extra non-sensitive vars (e.g. feature flags).
         ...props.lambdaEnvironmentVariables,
       },
@@ -281,17 +282,17 @@ export class DecoupleServicesStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, "AppSecretArn", {
       value: appSecret.secretArn,
-      description: "Secrets Manager secret ARN — update values here after first deploy",
+      description: "Secrets Manager secret ARN (externally managed — populated by CI/CD before deploy)",
       exportName: `${serviceName}-secret-arn`,
     });
 
-    new cdk.CfnOutput(this, "AppSecretUpdateCommand", {
+    new cdk.CfnOutput(this, "AppSecretBootstrapCommand", {
       value: [
-        `aws secretsmanager put-secret-value`,
-        `--secret-id decouple-services/${this.appEnv}/app`,
+        `aws secretsmanager create-secret`,
+        `--name decouple-services/${this.appEnv}/app`,
         `--secret-string '{"DATABASE_URL":"postgresql://user:pass@host:5432/db","CORS_ORIGINS":"*","LOG_LEVEL":"${isProd ? "warn" : "debug"}"}'`,
       ].join(" \\\n  "),
-      description: "CLI command to populate the secret after deployment",
+      description: "One-time CLI command to create the secret before first CDK deploy",
     });
   }
 }

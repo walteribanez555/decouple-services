@@ -197,6 +197,38 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
+      # ── MUST run before CDK deploy ──────────────────────────────────────────
+      # CloudFormation resolves the secret values into Lambda environment
+      # variables at deploy time (dynamic references). If the secret doesn't
+      # exist yet (first deploy) this step creates it; otherwise it updates it.
+      # Either way, CDK always sees the real values — never placeholders.
+      - name: Create or update app secret in Secrets Manager
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+          LOG_LEVEL:    ${{ secrets.LOG_LEVEL }}
+        run: |
+          ENV="${{ needs.changes.outputs.environment }}"
+          SECRET_NAME="decouple-services/${ENV}/app"
+          SECRET_JSON=$(jq -n \
+            --arg db   "$DATABASE_URL" \
+            --arg cors "$CORS_ORIGINS" \
+            --arg log  "$LOG_LEVEL" \
+            '{DATABASE_URL:$db,CORS_ORIGINS:$cors,LOG_LEVEL:$log}')
+
+          if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" &>/dev/null; then
+            aws secretsmanager put-secret-value \
+              --secret-id "$SECRET_NAME" \
+              --secret-string "$SECRET_JSON"
+            echo "✅ Secret updated: $SECRET_NAME"
+          else
+            aws secretsmanager create-secret \
+              --name "$SECRET_NAME" \
+              --description "Runtime configuration for decouple-services Lambda ($ENV)" \
+              --secret-string "$SECRET_JSON"
+            echo "✅ Secret created: $SECRET_NAME"
+          fi
+
       - name: Ensure shared stack is deployed
         working-directory: infra
         env:
@@ -225,22 +257,6 @@ jobs:
           npx cdk deploy ${{ needs.changes.outputs.stack_name }} \
             -c environment=${{ needs.changes.outputs.environment }} \
             --require-approval never
-
-      - name: Sync GitHub secrets → AWS Secrets Manager
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
-          LOG_LEVEL:    ${{ secrets.LOG_LEVEL }}
-        run: |
-          ENV="${{ needs.changes.outputs.environment }}"
-          aws secretsmanager put-secret-value \
-            --secret-id "decouple-services/${ENV}/app" \
-            --secret-string "$(jq -n \
-              --arg db   "$DATABASE_URL" \
-              --arg cors "$CORS_ORIGINS" \
-              --arg log  "$LOG_LEVEL" \
-              '{DATABASE_URL:$db,CORS_ORIGINS:$cors,LOG_LEVEL:$log}')"
-          echo "✅ Secrets synced to decouple-services/${ENV}/app"
 
   # ─── 4. Deploy Lambda code — fast path (only when apps/ changed) ───────────
   #   Runs after deploy-infra (or skips it). Never runs in parallel with it
