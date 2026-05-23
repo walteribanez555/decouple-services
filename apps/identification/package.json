@@ -1,0 +1,43 @@
+{
+  "name": "identification",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "node esbuild.config.js",
+    "build:prod": "node esbuild.config.js --prod",
+    "build:lambda": "node esbuild.config.js --target=lambda",
+    "build:lambda:prod": "node esbuild.config.js --prod --target=lambda",
+    "build:ecs": "node esbuild.config.js --target=ecs",
+    "dev": "nodemon --watch src --ext ts --exec ts-node src/main.ts",
+    "start": "node --env-file=.env dist/main.js",
+    "start:lambda": "node dist/index.js",
+    "clean": "rm -rf dist",
+    "migrate": "ts-node --project migrations/tsconfig.json migrations/runner.ts",
+    "migrate:create": "ts-node --project migrations/tsconfig.json migrations/create.ts",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@hono/node-server": "^1.14.0",
+    "hono": "^4.6.0",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/aws-lambda": "^8.10.161",
+    "@types/node": "^25.6.0",
+    "@types/pg": "^8.20.0",
+    "esbuild": "^0.28.0",
+    "eslint": "^10.2.0",
+    "nodemon": "^3.1.14",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.58.1"
+  }
+}
