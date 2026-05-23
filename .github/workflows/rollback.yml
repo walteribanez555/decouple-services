@@ -97,12 +97,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Install root workspace deps
+      - name: Install workspace deps
         run: npm ci
-
-      - name: Install app deps
-        run: npm ci
-        working-directory: apps/identification
 
       - name: Install infra deps
         run: npm ci

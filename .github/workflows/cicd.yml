@@ -92,15 +92,16 @@ jobs:
               - 'packages/**'
 
       # ── CDK drift check (skip on PRs — no secrets available) ─────────────
+      # Root npm ci installs all workspace packages (apps/*, packages/*).
+      # infra/ is not a workspace so it needs its own install.
+      - name: Install workspace deps (for drift check)
+        if: github.event_name != 'pull_request'
+        run: npm ci
+
       - name: Install infra deps (for drift check)
         if: github.event_name != 'pull_request'
         run: npm ci
         working-directory: infra
-
-      - name: Install app deps (needed for Lambda bundling during diff)
-        if: github.event_name != 'pull_request'
-        run: npm ci
-        working-directory: apps/identification
 
       - name: CDK drift check
         id: drift
@@ -153,12 +154,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Install root workspace deps
+      - name: Install workspace deps
         run: npm ci
-
-      - name: Install app deps
-        run: npm ci
-        working-directory: apps/identification
 
       - name: Type-check app
         run: npx tsc --noEmit
@@ -207,13 +204,10 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      # Install workspace deps first — esbuild needs hono etc. when bundling Lambda
-      - name: Install root workspace deps
+      # Root npm ci covers all workspace packages (apps/*, packages/*).
+      # infra/ is a separate package — needs its own install.
+      - name: Install workspace deps
         run: npm ci
-
-      - name: Install app deps
-        run: npm ci
-        working-directory: apps/identification
 
       - name: Install infra deps
         run: npm ci
