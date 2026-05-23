@@ -5,6 +5,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { config, createLogger } from './config';
+import { identificationRoute } from './modules/identification/identification.module';
 
 
 const logger = createLogger('App');
@@ -40,6 +41,12 @@ v1.get('/health', (c) => {
   logger.info('Health check');
   return c.json({ status: 'ok' });
 });
+
+// ── Feature modules ──────────────────────────────────────────────────────────
+
+v1.route('/identification', identificationRoute);
+// POST /api/v1/identification/presign  ← get signed S3 upload URL
+// POST /api/v1/identification/verify   ← run document analysis via Claude Sonnet
 
 
 app.route('/api/v1', v1);

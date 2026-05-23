@@ -4,6 +4,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as lambdaNodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
 import * as path from "path";
@@ -111,6 +112,48 @@ export class DecoupleServicesStack extends cdk.Stack {
     appSecret.grantRead(lambdaRole);
 
     // ─────────────────────────────────────────────────────────────────────────
+    // S3 bucket  —  temporary ID document storage for age verification
+    //
+    // Images are uploaded before the Bedrock call and deleted in a `finally`
+    // block.  The 2-day lifecycle rule acts as a safety net in case a Lambda
+    // timeout prevents the explicit deletion from running.
+    // ─────────────────────────────────────────────────────────────────────────
+    const verificationBucket = new s3.Bucket(this, "VerificationBucket", {
+      bucketName: `${serviceName}-verification`,
+      lifecycleRules: [
+        {
+          id: "expire-sessions",
+          prefix: "sessions/",
+          expiration: cdk.Duration.days(2),
+          enabled: true,
+        },
+      ],
+      // Never retain raw ID images beyond the stack lifetime.
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+      // Block all public access — images are only accessed by the Lambda role.
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+    });
+
+    verificationBucket.grantReadWrite(lambdaRole);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Bedrock  —  allow Lambda to invoke Claude Sonnet for document analysis
+    // ─────────────────────────────────────────────────────────────────────────
+    lambdaRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: "AllowBedrockInvokeModel",
+        actions: ["bedrock:InvokeModel"],
+        // Wildcard covers both v1 and v2 of the Sonnet model; restrict to a
+        // specific version in the BEDROCK_MODEL_ID env var if needed.
+        resources: [
+          `arn:aws:bedrock:${this.region}::foundation-model/anthropic.claude-3-5-sonnet*`,
+        ],
+      }),
+    );
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Lambda function
     // Terraform: aws_lambda_function.app
     //   runtime  = nodejs22.x
@@ -138,6 +181,10 @@ export class DecoupleServicesStack extends cdk.Stack {
         DATABASE_URL: appSecret.secretValueFromJson("DATABASE_URL").unsafeUnwrap(),
         CORS_ORIGINS: appSecret.secretValueFromJson("CORS_ORIGINS").unsafeUnwrap(),
         LOG_LEVEL:    appSecret.secretValueFromJson("LOG_LEVEL").unsafeUnwrap(),
+        // ── Age-verification ────────────────────────────────────────────────
+        S3_VERIFICATION_BUCKET: verificationBucket.bucketName,
+        BEDROCK_MODEL_ID: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        CONFIDENCE_THRESHOLD: "0.85",
         // Caller can pass extra non-sensitive vars (e.g. feature flags).
         ...props.lambdaEnvironmentVariables,
       },
