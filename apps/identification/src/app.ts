@@ -31,7 +31,7 @@ app.use('*', cors({
 // ── Routes ──────────────────────────────────────────────────────────────────
 
 app.get('/', (c) => {
-  logger.info('Root request');
+  logger.info('Root request info');
   return c.json({ message: 'Hello from service lambda' });
 });
 
