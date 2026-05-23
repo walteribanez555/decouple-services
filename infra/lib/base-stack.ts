@@ -155,6 +155,18 @@ export class DecoupleServicesStack extends cdk.Stack {
       }),
     );
 
+    lambdaRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: "AllowBedrockMarketplaceSubscription",
+        actions: [
+          "aws-marketplace:ViewSubscriptions",
+          "aws-marketplace:Subscribe",
+          "aws-marketplace:Unsubscribe",
+        ],
+        resources: ["*"],
+      }),
+    );
+
     // ─────────────────────────────────────────────────────────────────────────
     // Lambda function
     // Terraform: aws_lambda_function.app
