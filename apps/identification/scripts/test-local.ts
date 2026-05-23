@@ -108,6 +108,7 @@ const CONFIDENCE_THRESHOLD = Number(process.env.CONFIDENCE_THRESHOLD ?? '0.85');
 function isApproved(a: DocumentAnalysis): boolean {
   return (
     a.is_identity_document === true &&
+    a.dob                  !== ''   && // DOB must be present and readable
     a.is_adult             === true &&
     a.appears_authentic    === true &&
     a.confidence           >= CONFIDENCE_THRESHOLD
@@ -117,10 +118,12 @@ function isApproved(a: DocumentAnalysis): boolean {
 function buildRejectedReasons(a: DocumentAnalysis): RejectedReason[] {
   const reasons: RejectedReason[] = [];
   if (!a.is_identity_document) { reasons.push('not_identity_document'); return reasons; }
-  if (!a.is_adult)              reasons.push('underage');
-  if (!a.appears_authentic)     reasons.push('document_not_authentic');
+  // missing_dob and underage are mutually exclusive
+  if (a.dob === '')                        reasons.push('missing_dob');
+  else if (!a.is_adult)                    reasons.push('underage');
+  if (!a.appears_authentic)                reasons.push('document_not_authentic');
   if (a.confidence < CONFIDENCE_THRESHOLD) reasons.push('low_confidence');
-  if (a.image_quality === 'poor') reasons.push('poor_image_quality');
+  if (a.image_quality === 'poor')          reasons.push('poor_image_quality');
   return reasons;
 }
 

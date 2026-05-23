@@ -61,6 +61,7 @@ export interface VerificationDetails {
 
 export type RejectedReason =
   | 'not_identity_document'
+  | 'missing_dob'            // DOB absent, obscured, or unreadable — age cannot be determined
   | 'underage'
   | 'document_not_authentic'
   | 'low_confidence'

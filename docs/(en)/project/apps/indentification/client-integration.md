@@ -197,7 +197,9 @@ Content-Type: application/json
 
 | Code | Meaning |
 |---|---|
-| `underage` | Person is under 18 |
+| `not_identity_document` | Image is not a government-issued identity document |
+| `missing_dob` | Date of birth is absent, obscured, or unreadable — age cannot be determined |
+| `underage` | DOB is readable and person is under 18 |
 | `document_not_authentic` | Document shows signs of tampering |
 | `low_confidence` | AI confidence below threshold (0.85) |
 | `poor_image_quality` | Image is too blurry or dark to read |

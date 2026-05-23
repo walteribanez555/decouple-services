@@ -75,11 +75,11 @@ Each `POST /api/v1/identification/verify` triggers one Bedrock invocation:
 ┌─────────────────────────────────────────────────────────┐
 │  INPUT                                                  │
 │  ───────────────────────────────────────────────────    │
-│  System prompt (anti-injection rules)           ~450 ⬡  │
-│  User prompt (JSON schema + field rules)        ~110 ⬡  │
+│  System prompt (anti-injection + DOB rules)     ~465 ⬡  │
+│  User prompt (JSON schema + field rules)        ~160 ⬡  │
 │  Image (ID document, ~150 KB JPEG)            ~1 900    │
 │                                              ────────   │
-│  Total input                                 ~2 460     │
+│  Total input                                 ~2 525     │
 │                                                         │
 │  OUTPUT                                                 │
 │  ───────────────────────────────────────────────────    │
@@ -89,7 +89,7 @@ Each `POST /api/v1/identification/verify` triggers one Bedrock invocation:
 ⬡ = cacheable (constant across all calls)
 ```
 
-**Cacheable tokens:** ~560 (system prompt + user prompt — identical every call).  
+**Cacheable tokens:** ~625 (system prompt + user prompt — identical every call).  
 **Non-cacheable tokens:** ~1 900 image + ~55 output (unique per call).
 
 **Example output:**
@@ -104,19 +104,19 @@ Each `POST /api/v1/identification/verify` triggers one Bedrock invocation:
 
 ```
 Input (no cache):
-  2 460 tokens × ($0.06 / 1 000 000)  = $0.0001476
+  2 525 tokens × ($0.06 / 1 000 000)  = $0.0001515
 
 Output:
-    55 tokens × ($0.24 / 1 000 000)  = $0.0000132
+     55 tokens × ($0.24 / 1 000 000)  = $0.0000132
 ──────────────────────────────────────────────────
-Total                                 ≈ $0.000161
+Total                                  ≈ $0.000165
 ```
 
-**With prompt cache hit** (system + user prompt cached, ~560 tokens):
+**With prompt cache hit** (system + user prompt cached, ~625 tokens):
 
 ```
 Cached input:
-    560 tokens × ($0.015 / 1 000 000) = $0.0000084
+    625 tokens × ($0.015 / 1 000 000) = $0.0000094
 
 Non-cached input (image only):
   1 900 tokens × ($0.06  / 1 000 000) = $0.0001140
@@ -124,7 +124,7 @@ Non-cached input (image only):
 Output:
      55 tokens × ($0.24  / 1 000 000) = $0.0000132
 ──────────────────────────────────────────────────
-Total with cache                       ≈ $0.000136   (−16%)
+Total with cache                       ≈ $0.000137   (−17%)
 ```
 
 ---
@@ -210,6 +210,7 @@ Output tokens cost 4× more per token than input ($0.24 vs $0.06 per 1M). Verbos
 |---|---|---|
 | Removed `full_name` and `document_number` from schema | `identification.service.ts` | −25 output tokens / call |
 | Compressed `USER_PROMPT` (~190 → ~110 tokens) | `identification.service.ts` | −80 input tokens / call |
+| Added DOB security rules to `SYSTEM_PROMPT` + `USER_PROMPT` | `identification.service.ts` | +65 input tokens (security trade-off) |
 | Set `maxTokens: 120` (was 512) | `identification.service.ts` | Prevents model padding |
 | `temperature: 0` | `identification.service.ts` | Deterministic, no retries |
 
@@ -275,7 +276,7 @@ cost_per_call =
   / 1_000_000
 
 # Nova Lite — Standard tier with prompt cache:
-#   cached_input_tokens   = 560   (system + user prompt)
+#   cached_input_tokens   = 625   (system + user prompt)
 #   cache_read_price      = 0.015
 #   uncached_input_tokens = 1 900 (image)
 #   standard_input_price  = 0.06
