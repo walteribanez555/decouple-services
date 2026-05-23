@@ -1,0 +1,9 @@
+{
+  "name": "mobile",
+  "scripts": {
+    "dev": "flutter run",
+    "build": "flutter build apk",
+    "analyze": "flutter analyze",
+    "test": "flutter test"
+  }
+}
