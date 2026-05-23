@@ -24,20 +24,20 @@ Serverless REST API that verifies a user's age by analysing a government-issued 
 ```
 Client                   Lambda                    AWS
   │                         │                        │
-  │  POST /presign           │                        │
+  │  POST /presign          │                        │
   │ ──────────────────────► │                        │
-  │  { sessionId, uploadUrl }│                        │
+  │ { sessionId, uploadUrl }│                        │
   │ ◄────────────────────── │                        │
   │                         │                        │
-  │  PUT <uploadUrl> (image) │                        │
+  │  PUT <uploadUrl> (image)│                        │
   │ ──────────────────────────────────────────────► S3
   │                         │                        │
-  │  POST /verify            │                        │
+  │  POST /verify           │                        │
   │ ──────────────────────► │                        │
   │                         │── getObject ──────────► S3
   │                         │── InvokeModel ────────► Bedrock
   │                         │── deleteObject ───────► S3
-  │  VerificationResult      │                        │
+  │  VerificationResult     │                        │
   │ ◄────────────────────── │                        │
 ```
 
