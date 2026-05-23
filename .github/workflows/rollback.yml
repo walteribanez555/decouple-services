@@ -107,6 +107,8 @@ jobs:
       # Redeploy with the code from the target tag
       - name: CDK deploy (prod) from ${{ inputs.target_version }}
         working-directory: infra
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.aws_account }}
         run: |
           npx cdk deploy DecoupleServicesStack-Prod \
             -c environment=prod \

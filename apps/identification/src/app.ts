@@ -31,7 +31,7 @@ app.use('*', cors({
 
 app.get('/', (c) => {
   logger.info('Root request');
-  return c.json({ message: 'Hello from service' });
+  return c.json({ message: 'Hello from service lambda' });
 });
 
 const v1 = new Hono();

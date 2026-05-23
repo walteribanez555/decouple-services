@@ -11,8 +11,15 @@ const app = new cdk.App();
 // Usage:  npx cdk deploy ... -c environment=prod
 const environment = (app.node.tryGetContext("environment") as string) || "dev";
 
-const AWS_ACCOUNT = "XXXXXXXXXX";
-const AWS_REGION = "us-east-1";
+// Account resolution order:
+//   1. AWS_ACCOUNT_ID env var (set from the `aws_account` GitHub repository secret)
+//   2. CDK_DEFAULT_ACCOUNT (automatically populated by the CDK CLI from AWS credentials)
+// Region follows the same pattern; hard-code to us-east-1 as fallback.
+const AWS_ACCOUNT =
+  process.env.AWS_ACCOUNT_ID ??
+  process.env.CDK_DEFAULT_ACCOUNT ??
+  (() => { throw new Error("AWS account not resolved — set AWS_ACCOUNT_ID or configure AWS credentials."); })();
+const AWS_REGION = process.env.CDK_DEFAULT_REGION ?? "us-east-1";
 
 // ─── Shared resources (deployed once, region-wide) ────────────────────────────
 new SharedResourcesStack(app, "DecoupleServicesSharedStack", {
