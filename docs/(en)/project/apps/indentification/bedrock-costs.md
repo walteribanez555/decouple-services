@@ -75,22 +75,22 @@ Each `POST /api/v1/identification/verify` triggers one Bedrock invocation:
 ┌─────────────────────────────────────────────────────────┐
 │  INPUT                                                  │
 │  ───────────────────────────────────────────────────    │
-│  System prompt (anti-injection + DOB rules)     ~465 ⬡  │
-│  User prompt (JSON schema + field rules)        ~160 ⬡  │
-│  Image (ID document, ~150 KB JPEG)            ~1 900    │
+│  System prompt (anti-injection + DOB rules)     ~570 ⬡  │
+│  User prompt (JSON schema + field rules)        ~210 ⬡  │
+│  Image (ID document, ~150 KB JPEG)            ~1 874    │
 │                                              ────────   │
-│  Total input                                 ~2 525     │
+│  Total input                                 ~2 654     │
 │                                                         │
 │  OUTPUT                                                 │
 │  ───────────────────────────────────────────────────    │
-│  JSON result (6 fields, no prose)               ~55     │
+│  JSON result (6 fields, no prose)               ~70     │
 └─────────────────────────────────────────────────────────┘
 
 ⬡ = cacheable (constant across all calls)
 ```
 
-**Cacheable tokens:** ~625 (system prompt + user prompt — identical every call).  
-**Non-cacheable tokens:** ~1 900 image + ~55 output (unique per call).
+**Cacheable tokens:** ~780 (system prompt + user prompt — identical every call).  
+**Non-cacheable tokens:** ~1 874 image + ~70 output (unique per call).
 
 **Example output:**
 
@@ -104,27 +104,27 @@ Each `POST /api/v1/identification/verify` triggers one Bedrock invocation:
 
 ```
 Input (no cache):
-  2 525 tokens × ($0.06 / 1 000 000)  = $0.0001515
+  2 654 tokens × ($0.06 / 1 000 000)  = $0.0001592
 
 Output:
-     55 tokens × ($0.24 / 1 000 000)  = $0.0000132
+     70 tokens × ($0.24 / 1 000 000)  = $0.0000168
 ──────────────────────────────────────────────────
-Total                                  ≈ $0.000165
+Total                                  ≈ $0.000176
 ```
 
-**With prompt cache hit** (system + user prompt cached, ~625 tokens):
+**With prompt cache hit** (system + user prompt cached, ~780 tokens):
 
 ```
 Cached input:
-    625 tokens × ($0.015 / 1 000 000) = $0.0000094
+    780 tokens × ($0.015 / 1 000 000) = $0.0000117
 
 Non-cached input (image only):
-  1 900 tokens × ($0.06  / 1 000 000) = $0.0001140
+  1 874 tokens × ($0.06  / 1 000 000) = $0.0001124
 
 Output:
-     55 tokens × ($0.24  / 1 000 000) = $0.0000132
+     70 tokens × ($0.24  / 1 000 000) = $0.0000168
 ──────────────────────────────────────────────────
-Total with cache                       ≈ $0.000137   (−17%)
+Total with cache                       ≈ $0.000141   (−20%)
 ```
 
 ---
@@ -135,14 +135,14 @@ Tests run against AWS Bedrock (`us-east-1`) with a real JPEG identity document (
 
 | Model | Input tokens | Output tokens | Cost / call | Latency | Decision |
 |---|---|---|---|---|---|
-| `amazon.nova-lite-v1:0` ✅ | 2 493 | 70 | **$0.000166** | 2 416 ms | ✅ Approved |
-| `us.amazon.nova-2-lite-v1:0` | 606 | 62 | $0.000337 | 1 893 ms | ✅ Approved |
+| `amazon.nova-lite-v1:0` ✅ | 2 654 | 70 | **$0.000176** | 2 402 ms | ✅ Approved |
+| `us.amazon.nova-2-lite-v1:0` | 756 | 62 | $0.000382 | 2 244 ms | ✅ Approved |
 
-> Both returned identical results: `confidence: 0.95`, `dob: 2002-07-01`, `image_quality: good`.
+> Both returned `confidence: 0.95`, `image_quality: good` on the same document (154 KB JPEG).
 
 ### Why Nova Lite over Nova 2 Lite
 
-Nova 2 Lite (Global cross-region) processes images with a more efficient tokenizer — 606 vs ~2 500 input tokens — but its per-token price ($0.30 input) is 5× higher than Nova Lite ($0.06). The result: **Nova 2 Lite costs ~2× more per call** for the same accuracy.
+Nova 2 Lite (Global cross-region) tokenizes images more efficiently — 756 vs 2 654 input tokens (3.5× fewer) — but its per-token price ($0.30/1M) is 5× higher than Nova Lite ($0.06/1M). The result: **Nova 2 Lite costs ~2.2× more per call** for equivalent accuracy.
 
 ---
 
@@ -152,12 +152,12 @@ Nova 2 Lite (Global cross-region) processes images with a more efficient tokeniz
 
 | Monthly verifications | Bedrock | Lambda + API GW | **Total** |
 |---|---|---|---|
-| 1 000 | $0.17 | ~$0.10 | **~$0.27** |
-| 10 000 | $1.66 | ~$0.50 | **~$2.16** |
-| 50 000 | $8.30 | ~$2.00 | **~$10.30** |
-| 100 000 | $16.60 | ~$4.00 | **~$20.60** |
-| 500 000 | $83.00 | ~$15.00 | **~$98.00** |
-| 1 000 000 | $166.00 | ~$25.00 | **~$191.00** |
+| 1 000 | $0.18 | ~$0.10 | **~$0.28** |
+| 10 000 | $1.76 | ~$0.50 | **~$2.26** |
+| 50 000 | $8.80 | ~$2.00 | **~$10.80** |
+| 100 000 | $17.60 | ~$4.00 | **~$21.60** |
+| 500 000 | $88.00 | ~$15.00 | **~$103.00** |
+| 1 000 000 | $176.00 | ~$25.00 | **~$201.00** |
 
 ### Batch tier — 50% cheaper, async only
 
@@ -165,19 +165,19 @@ Suitable for non-real-time verification (e.g. backfill, nightly batch jobs).
 
 | Monthly verifications | Bedrock (Batch) | Savings vs Standard |
 |---|---|---|
-| 10 000 | $0.83 | −$0.83 |
-| 100 000 | $8.30 | −$8.30 |
-| 500 000 | $41.50 | −$41.50 |
-| 1 000 000 | $83.00 | −$83.00 |
+| 10 000 | $0.88 | −$0.88 |
+| 100 000 | $8.80 | −$8.80 |
+| 500 000 | $44.00 | −$44.00 |
+| 1 000 000 | $88.00 | −$88.00 |
 
 ### Prompt cache savings (Standard + cache)
 
 | Monthly verifications | Savings |
 |---|---|
-| 10 000 | −$0.25 |
-| 100 000 | −$2.52 |
-| 500 000 | −$12.60 |
-| 1 000 000 | −$25.20 |
+| 10 000 | −$0.35 |
+| 100 000 | −$3.51 |
+| 500 000 | −$17.55 |
+| 1 000 000 | −$35.10 |
 
 ### Supporting AWS costs
 
@@ -210,7 +210,9 @@ Output tokens cost 4× more per token than input ($0.24 vs $0.06 per 1M). Verbos
 |---|---|---|
 | Removed `full_name` and `document_number` from schema | `identification.service.ts` | −25 output tokens / call |
 | Compressed `USER_PROMPT` (~190 → ~110 tokens) | `identification.service.ts` | −80 input tokens / call |
-| Added DOB security rules to `SYSTEM_PROMPT` + `USER_PROMPT` | `identification.service.ts` | +65 input tokens (security trade-off) |
+| DOB security v1 — absent / obscured field | `identification.service.ts` | +65 input tokens |
+| DOB security v2 — partial dates (year cut off) | `identification.service.ts` | +96 input tokens |
+| `isValidDob()` code-level guard | `identification.service.ts` | Blocks fabricated years regardless of model output |
 | Set `maxTokens: 120` (was 512) | `identification.service.ts` | Prevents model padding |
 | `temperature: 0` | `identification.service.ts` | Deterministic, no retries |
 
@@ -276,14 +278,14 @@ cost_per_call =
   / 1_000_000
 
 # Nova Lite — Standard tier with prompt cache:
-#   cached_input_tokens   = 625   (system + user prompt)
+#   cached_input_tokens   = 780   (system + user prompt)
 #   cache_read_price      = 0.015
-#   uncached_input_tokens = 1 900 (image)
+#   uncached_input_tokens = 1 874 (image)
 #   standard_input_price  = 0.06
-#   output_tokens         = 55
+#   output_tokens         = 70
 #   output_price          = 0.24
 #
-# → cost_per_call ≈ $0.000136
+# → cost_per_call ≈ $0.000141
 
 monthly_cost = verifications_per_month × cost_per_call
 ```

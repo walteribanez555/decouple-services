@@ -105,10 +105,19 @@ const models        = extraModels.length > 0 ? extraModels : [DEFAULT_MODEL];
 
 const CONFIDENCE_THRESHOLD = Number(process.env.CONFIDENCE_THRESHOLD ?? '0.85');
 
+/** Mirrors IdentificationService.isValidDob() — catches fabricated/partial years. */
+function isValidDob(dob: string): boolean {
+  if (!dob) return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dob);
+  if (!match) return false;
+  const year = parseInt(match[1], 10);
+  return year >= 1900 && year <= new Date().getFullYear();
+}
+
 function isApproved(a: DocumentAnalysis): boolean {
   return (
     a.is_identity_document === true &&
-    a.dob                  !== ''   && // DOB must be present and readable
+    isValidDob(a.dob)       &&        // format + plausible year
     a.is_adult             === true &&
     a.appears_authentic    === true &&
     a.confidence           >= CONFIDENCE_THRESHOLD
@@ -119,7 +128,7 @@ function buildRejectedReasons(a: DocumentAnalysis): RejectedReason[] {
   const reasons: RejectedReason[] = [];
   if (!a.is_identity_document) { reasons.push('not_identity_document'); return reasons; }
   // missing_dob and underage are mutually exclusive
-  if (a.dob === '')                        reasons.push('missing_dob');
+  if (!isValidDob(a.dob))                  reasons.push('missing_dob');
   else if (!a.is_adult)                    reasons.push('underage');
   if (!a.appears_authentic)                reasons.push('document_not_authentic');
   if (a.confidence < CONFIDENCE_THRESHOLD) reasons.push('low_confidence');
