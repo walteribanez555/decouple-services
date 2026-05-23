@@ -1,0 +1,29 @@
+# CODEOWNERS
+#
+# Each line is a file pattern followed by one or more owners.
+# The last matching pattern takes precedence.
+# Owners are automatically requested for review on any PR that touches
+# the matching paths.
+#
+# Syntax: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# ── Global fallback — all files ───────────────────────────────────────────────
+*                                       @walteribanez555
+
+# ── Infrastructure ────────────────────────────────────────────────────────────
+/infra/                                 @walteribanez555
+
+# ── Identification service ────────────────────────────────────────────────────
+/apps/identification/                   @walteribanez555
+
+# ── Mobile app ────────────────────────────────────────────────────────────────
+/apps/mobile/                           @walteribanez555
+
+# ── CI/CD workflows ───────────────────────────────────────────────────────────
+/.github/workflows/                     @walteribanez555
+
+# ── Dependency manifests — require review on any lockfile change ──────────────
+package-lock.json                       @walteribanez555
+/apps/identification/package-lock.json  @walteribanez555
+/infra/package-lock.json                @walteribanez555
+/apps/mobile/pubspec.lock               @walteribanez555

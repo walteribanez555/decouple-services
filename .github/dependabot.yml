@@ -1,0 +1,80 @@
+version: 2
+
+updates:
+  # ── Root workspace (Turborepo + shared devDeps) ───────────────────────────
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/La_Paz
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - npm
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      turbo:
+        patterns: ["turbo"]
+      typescript:
+        patterns: ["typescript", "@types/*"]
+
+  # ── Identification service ────────────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /apps/identification
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/La_Paz
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - npm
+      - identification
+    commit-message:
+      prefix: "chore(deps/identification)"
+    groups:
+      aws-sdk:
+        patterns: ["@aws-sdk/*"]
+      hono:
+        patterns: ["hono", "hono/*"]
+
+  # ── Infrastructure (CDK) ──────────────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /infra
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/La_Paz
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - npm
+      - infra
+    commit-message:
+      prefix: "chore(deps/infra)"
+    groups:
+      aws-cdk:
+        patterns: ["aws-cdk-lib", "@aws-cdk/*", "constructs"]
+
+  # ── GitHub Actions ────────────────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/La_Paz
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions:
+        patterns: ["*"]
