@@ -149,8 +149,14 @@ export class DecoupleServicesStack extends cdk.Stack {
         //   1. The inference profile ARN (account-scoped, any region for routing)
         //   2. The underlying foundation model ARN (no account, wildcard region)
         resources: [
+          // Claude Haiku 4.5 (active) + Sonnet 4.5/4.6 (fallback / future)
+          `arn:aws:bedrock:*:${this.account}:inference-profile/us.anthropic.claude-haiku-4*`,
           `arn:aws:bedrock:*:${this.account}:inference-profile/us.anthropic.claude-sonnet-4*`,
+          `arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4*`,
           `arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4*`,
+          // Amazon Nova Lite / Pro (on-demand, no inference profile)
+          `arn:aws:bedrock:*::foundation-model/amazon.nova-lite-v1:0`,
+          `arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0`,
         ],
       }),
     );
@@ -197,7 +203,7 @@ export class DecoupleServicesStack extends cdk.Stack {
         LOG_LEVEL:    appSecret.secretValueFromJson("LOG_LEVEL").unsafeUnwrap(),
         // ── Age-verification ────────────────────────────────────────────────
         S3_VERIFICATION_BUCKET: verificationBucket.bucketName,
-        BEDROCK_MODEL_ID: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        BEDROCK_MODEL_ID: "amazon.nova-lite-v1:0",
         CONFIDENCE_THRESHOLD: "0.85",
         // Caller can pass extra non-sensitive vars (e.g. feature flags).
         ...props.lambdaEnvironmentVariables,

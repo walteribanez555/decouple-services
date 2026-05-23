@@ -7,6 +7,10 @@
  *
  * Supports: claude-haiku-4-5, claude-sonnet-4-5, claude-sonnet-4-6, claude-opus-4-x
  * and any future model that follows the same Messages API contract.
+ *
+ * Default model: Claude Haiku 4.5 (cross-region inference profile).
+ * ~73% cheaper than Sonnet 4.5 with identical JSON output quality for
+ * document verification. Override via the BEDROCK_MODEL_ID env var.
  */
 
 import type {
@@ -17,7 +21,7 @@ import type {
 export class ClaudeAdapter implements IBedrockAdapter {
   readonly defaultModelId: string;
 
-  constructor(modelId = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0') {
+  constructor(modelId = 'us.anthropic.claude-haiku-4-5-20251001-v1:0') {
     this.defaultModelId = modelId;
   }
 

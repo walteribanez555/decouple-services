@@ -5,16 +5,20 @@
  *   1. Wires concrete dependencies (S3Service, BedrockService + adapter, etc.)
  *   2. Registers routes on the Hono router
  *
- * To swap the AI model: change the adapter passed to BedrockService.
- * To swap the S3 bucket: change the value passed to S3Service.
- * Nothing else in the module needs to change.
+ * Adapter selection is automatic — driven entirely by BEDROCK_MODEL_ID:
+ *   amazon.nova-*          → NovaAdapter   (on-demand, no inference profile)
+ *   us.amazon.nova-*       → NovaAdapter   (cross-region inference profile)
+ *   anthropic.claude-*     → ClaudeAdapter (direct model ID)
+ *   us.anthropic.claude-*  → ClaudeAdapter (cross-region inference profile)
  *
- *   new BedrockService(new ClaudeAdapter())   ← today
- *   new BedrockService(new TitanAdapter())    ← tomorrow, one line change
+ * To switch models: update BEDROCK_MODEL_ID in infra/lib/base-stack.ts.
+ * No code change required here.
  */
 
 import { Hono } from 'hono';
+import type { IBedrockAdapter } from '../../common/adapters/bedrock/bedrock-adapter.interface';
 import { ClaudeAdapter } from '../../common/adapters/bedrock/claude.adapter';
+import { NovaAdapter }   from '../../common/adapters/bedrock/nova.adapter';
 import { BedrockService } from '../../common/services/bedrock.service';
 import { S3Service } from '../../common/services/s3.service';
 import { IdentificationController } from './identification.controller';
@@ -26,12 +30,22 @@ function requireEnv(name: string): string {
   return value;
 }
 
+// ─── Adapter factory ──────────────────────────────────────────────────────────
+
+function resolveAdapter(modelId?: string): IBedrockAdapter {
+  if (modelId?.startsWith('amazon.nova') || modelId?.startsWith('us.amazon.nova')) {
+    return new NovaAdapter(modelId);
+  }
+  // Default: Claude (Haiku 4.5) — handles all anthropic.* and us.anthropic.* IDs.
+  return new ClaudeAdapter(modelId);
+}
+
 // ─── Wire dependencies ────────────────────────────────────────────────────────
 
 const storage = new S3Service(requireEnv('S3_VERIFICATION_BUCKET'));
 
 const bedrock = new BedrockService(
-  new ClaudeAdapter(process.env.BEDROCK_MODEL_ID),
+  resolveAdapter(process.env.BEDROCK_MODEL_ID),
 );
 
 const service = new IdentificationService(storage, bedrock, {
