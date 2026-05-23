@@ -36,6 +36,8 @@ export interface PresignResponse {
 // ── Bedrock response ──────────────────────────────────────────────────────────
 
 export interface DocumentAnalysis {
+  /** False when the image is not a government-issued identity document at all. */
+  is_identity_document: boolean;
   full_name: string;
   /** YYYY-MM-DD */
   dob: string;
@@ -60,6 +62,7 @@ export interface VerificationDetails {
 }
 
 export type RejectedReason =
+  | 'not_identity_document'
   | 'underage'
   | 'document_not_authentic'
   | 'low_confidence'

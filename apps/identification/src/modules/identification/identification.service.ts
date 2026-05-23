@@ -33,20 +33,28 @@ const SYSTEM_PROMPT =
   'You are a document-verification specialist. ' +
   'Analyse identity documents accurately and return only structured JSON.';
 
-const USER_PROMPT = `Analyse this identity document photo.
+const USER_PROMPT = `Analyse this image.
 
-Extract exactly:
+First determine:
+- is_identity_document: boolean (true ONLY if this is a government-issued identity document such as a national ID card, passport, or driver's license — false for selfies, receipts, random photos, or anything else)
+
+If is_identity_document is false, return immediately with all other fields as empty/null defaults.
+
+If is_identity_document is true, also extract:
 - full_name: string (full legal name as printed on the document)
 - dob: string (date of birth, YYYY-MM-DD format)
 - document_number: string (ID or passport number)
 
-Determine:
+And determine:
 - is_adult: boolean (true when the person is 18 or older as of today, calculated from dob)
 - appears_authentic: boolean (true when the document shows no obvious signs of tampering or forgery)
 - image_quality: "good" | "acceptable" | "poor" (based on clarity and readability)
 - confidence: number 0.0–1.0 (overall confidence in the analysis)
 
-Return ONLY a JSON object. No markdown, no explanation, no code fences.`;
+Return ONLY a JSON object. No markdown, no explanation, no code fences.
+
+Example when not a document:
+{"is_identity_document":false,"full_name":"","dob":"","document_number":"","is_adult":false,"appears_authentic":false,"image_quality":"poor","confidence":0}`;
 
 // ─── Service ──────────────────────────────────────────────────────────────────
 
@@ -136,6 +144,7 @@ export class IdentificationService extends BaseService {
 
   private isApproved(analysis: DocumentAnalysis): boolean {
     return (
+      analysis.is_identity_document === true &&
       analysis.is_adult === true &&
       analysis.appears_authentic === true &&
       analysis.confidence >= this.confidenceThreshold
@@ -144,6 +153,10 @@ export class IdentificationService extends BaseService {
 
   private buildRejectedReasons(analysis: DocumentAnalysis): RejectedReason[] {
     const reasons: RejectedReason[] = [];
+    if (!analysis.is_identity_document) {
+      reasons.push('not_identity_document');
+      return reasons; // no point checking further
+    }
     if (!analysis.is_adult) reasons.push('underage');
     if (!analysis.appears_authentic) reasons.push('document_not_authentic');
     if (analysis.confidence < this.confidenceThreshold) reasons.push('low_confidence');
