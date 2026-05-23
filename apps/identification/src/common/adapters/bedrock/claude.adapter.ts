@@ -17,7 +17,7 @@ import type {
 export class ClaudeAdapter implements IBedrockAdapter {
   readonly defaultModelId: string;
 
-  constructor(modelId = 'anthropic.claude-sonnet-4-5-20250929-v1:0') {
+  constructor(modelId = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0') {
     this.defaultModelId = modelId;
   }
 

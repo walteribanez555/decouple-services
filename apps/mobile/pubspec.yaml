@@ -49,7 +49,14 @@ dependencies:
   flutter_dotenv: ^5.2.1
 
   # ── Camera / image picker ──────────────────────────────────────────────────
+  camera: ^0.11.0
   image_picker: ^1.1.2
+
+  # ── Image compression ──────────────────────────────────────────────────────
+  flutter_image_compress: ^2.3.0
+
+  # ── Filesystem (temp dir for compression output) ──────────────────────────
+  path_provider: ^2.1.0
 
   # ── Functional programming (Either pattern) ────────────────────────────────
   fpdart: ^1.1.0

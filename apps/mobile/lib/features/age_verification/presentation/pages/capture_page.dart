@@ -1,11 +1,25 @@
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:mobile/core/theme/app_colors.dart';
+import 'package:path_provider/path_provider.dart';
 
+import '../../../../core/theme/app_colors.dart';
 import '../../domain/entities/doc_type.dart';
 import '../cubit/age_verification_cubit.dart';
+import '../widgets/camera_overlay.dart';
+import '../widgets/capture_button.dart';
+import '../widgets/status_chip.dart';
 
+/// Full-screen in-app camera screen.
+///
+/// Responsibilities (mobile layer stays deliberately thin):
+///   1. Initialize and dispose the [CameraController]
+///   2. Display a live [CameraPreview] behind the [CameraOverlay]
+///   3. Capture → compress (quality 80) → hand the file path to the cubit
+///
+/// All OCR, validation, and fraud detection happen on the backend.
 class CapturePage extends StatefulWidget {
   const CapturePage({super.key, required this.docType});
 
@@ -15,325 +29,344 @@ class CapturePage extends StatefulWidget {
   State<CapturePage> createState() => _CapturePageState();
 }
 
-class _CapturePageState extends State<CapturePage> {
+class _CapturePageState extends State<CapturePage>
+    with WidgetsBindingObserver {
+  CameraController? _controller;
+  bool _initialized = false;
+  bool _capturing = false;
+  String? _initError;
+
   final _picker = ImagePicker();
-  bool _picking = false;
 
-  Future<void> _pick(ImageSource source) async {
-    if (_picking) return;
-    setState(() => _picking = true);
+  // ── Lifecycle ───────────────────────────────────────────────────────────────
 
-    try {
-      final file = await _picker.pickImage(
-        source: source,
-        imageQuality: 90,
-        preferredCameraDevice: CameraDevice.rear,
-      );
-      if (!mounted) return;
-      if (file != null) {
-        final mimeType = file.mimeType ?? 'image/jpeg';
-        context.read<AgeVerificationCubit>().onCapture(
-              docType: widget.docType,
-              imagePath: file.path,
-              mimeType: mimeType,
-            );
-      }
-    } finally {
-      if (mounted) setState(() => _picking = false);
-    }
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _initCamera();
   }
 
   @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final ctrl = _controller;
+    if (ctrl == null || !ctrl.value.isInitialized) return;
+    if (state == AppLifecycleState.inactive) {
+      ctrl.dispose();
+    } else if (state == AppLifecycleState.resumed) {
+      _initCamera();
+    }
+  }
+
+  // ── Camera init ─────────────────────────────────────────────────────────────
+
+  Future<void> _initCamera() async {
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) {
+        if (mounted) setState(() => _initError = 'No camera found on this device.');
+        return;
+      }
+
+      final ctrl = CameraController(
+        cameras.first,
+        // Medium resolution: enough for OCR, keeps memory and upload size low.
+        ResolutionPreset.medium,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+
+      await ctrl.initialize();
+
+      if (!mounted) {
+        ctrl.dispose();
+        return;
+      }
+
+      setState(() {
+        _controller = ctrl;
+        _initialized = true;
+        _initError = null;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _initError = e.toString());
+    }
+  }
+
+  // ── Capture ─────────────────────────────────────────────────────────────────
+
+  Future<void> _capture() async {
+    final ctrl = _controller;
+    if (_capturing || !_initialized || ctrl == null) return;
+    setState(() => _capturing = true);
+
+    try {
+      final XFile raw = await ctrl.takePicture();
+
+      // Compress before upload — cuts size ~40% with no OCR-visible quality loss.
+      final tempDir = await getTemporaryDirectory();
+      final targetPath =
+          '${tempDir.path}/doc_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+      final XFile? compressed = await FlutterImageCompress.compressAndGetFile(
+        raw.path,
+        targetPath,
+        quality: 80,
+        format: CompressFormat.jpeg,
+      );
+
+      if (!mounted) return;
+
+      context.read<AgeVerificationCubit>().onCapture(
+            docType: widget.docType,
+            imagePath: compressed?.path ?? raw.path,
+            mimeType: 'image/jpeg',
+          );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Capture failed — please try again.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _capturing = false);
+    }
+  }
+
+  Future<void> _pickFromGallery() async {
+    try {
+      final file = await _picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+      );
+      if (file != null && mounted) {
+        context.read<AgeVerificationCubit>().onCapture(
+              docType: widget.docType,
+              imagePath: file.path,
+              mimeType: file.mimeType ?? 'image/jpeg',
+            );
+      }
+    } catch (_) {
+      // Ignore cancellation.
+    }
+  }
+
+  Future<void> _toggleFlash() async {
+    final ctrl = _controller;
+    if (ctrl == null || !_initialized) return;
+    final next = ctrl.value.flashMode == FlashMode.torch
+        ? FlashMode.off
+        : FlashMode.torch;
+    await ctrl.setFlashMode(next);
+    if (mounted) setState(() {});
+  }
+
+  // ── Build ───────────────────────────────────────────────────────────────────
+
+  @override
   Widget build(BuildContext context) {
-    final cubit = context.read<AgeVerificationCubit>();
-
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0D),
+      backgroundColor: Colors.black,
       body: Stack(
+        fit: StackFit.expand,
         children: [
-          // ── Subtle texture ───────────────────────────────────────────
-          Positioned.fill(
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: RadialGradient(
-                  center: Alignment(0, -0.3),
-                  radius: 1.2,
-                  colors: [Color(0xFF2A2A30), Color(0xFF0A0A0D)],
-                ),
-              ),
-            ),
-          ),
+          // 1. Camera preview
+          _buildPreview(),
 
-          SafeArea(
-            child: Column(
-              children: [
-                // ── Top bar ──────────────────────────────────────────
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
-                  child: Row(
-                    children: [
-                      _GlassButton(
-                        icon: Icons.close,
-                        onTap: () => cubit.proceed(widget.docType),
-                      ),
-                      const Spacer(),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.4),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          '${widget.docType.label} · ${widget.docType.hint}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const Spacer(),
-                      const SizedBox(width: 40),
-                    ],
-                  ),
-                ),
+          // 2. Dark overlay + document frame
+          const CameraOverlay(),
 
-                const Spacer(),
+          // 3. Top bar (close + doc-type label)
+          _buildTopBar(context),
 
-                // ── Viewfinder frame ─────────────────────────────────
-                Container(
-                  width: 300,
-                  height: 188,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                        color: AppColors.accent, width: 2.5),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.55),
-                        blurRadius: 0,
-                        spreadRadius: 9999,
-                      ),
-                    ],
-                  ),
-                  child: Stack(
-                    children: [
-                      // Inner label
-                      Center(
-                        child: Text(
-                          'ALIGN ID HERE',
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.4),
-                            fontSize: 11,
-                            fontFamily: 'monospace',
-                            letterSpacing: 1,
-                          ),
-                        ),
-                      ),
-                      // Corner accents
-                      ..._corners(),
-                    ],
-                  ),
-                ),
+          // 4. Alignment hint below the frame
+          _buildStatusChip(context),
 
-                const SizedBox(height: 20),
-
-                // ── Status hint ──────────────────────────────────────
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: const Text(
-                    'Position your ID inside the frame',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-
-                const Spacer(),
-
-                // ── Shutter cluster ──────────────────────────────────
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(36, 0, 36, 32),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      // Gallery
-                      _GlassButton(
-                        icon: Icons.photo_library_outlined,
-                        onTap: () => _pick(ImageSource.gallery),
-                      ),
-                      // Shutter
-                      GestureDetector(
-                        onTap: _picking
-                            ? null
-                            : () => _pick(ImageSource.camera),
-                        child: Container(
-                          width: 76,
-                          height: 76,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.white,
-                            border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.9),
-                                width: 4),
-                            boxShadow: [
-                              BoxShadow(
-                                color:
-                                    Colors.white.withValues(alpha: 0.3),
-                                blurRadius: 0,
-                                spreadRadius: 2,
-                              ),
-                            ],
-                          ),
-                          child: _picking
-                              ? const Padding(
-                                  padding: EdgeInsets.all(20),
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: AppColors.ink,
-                                  ),
-                                )
-                              : null,
-                        ),
-                      ),
-                      // Placeholder for symmetry
-                      const SizedBox(width: 40),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+          // 5. Shutter cluster at the bottom
+          _buildShutterCluster(context),
         ],
       ),
     );
   }
 
-  List<Widget> _corners() {
-    const color = AppColors.accent;
-    const size = 28.0;
-    const thickness = 4.0;
+  // ── Layer builders ──────────────────────────────────────────────────────────
 
-    return [
-      // Top-left
-      Positioned(
-        top: -2, left: -2,
-        child: _Corner(size: size, thickness: thickness, color: color,
-            top: true, left: true),
-      ),
-      // Top-right
-      Positioned(
-        top: -2, right: -2,
-        child: _Corner(size: size, thickness: thickness, color: color,
-            top: true, left: false),
-      ),
-      // Bottom-left
-      Positioned(
-        bottom: -2, left: -2,
-        child: _Corner(size: size, thickness: thickness, color: color,
-            top: false, left: true),
-      ),
-      // Bottom-right
-      Positioned(
-        bottom: -2, right: -2,
-        child: _Corner(size: size, thickness: thickness, color: color,
-            top: false, left: false),
-      ),
-    ];
-  }
-}
-
-class _Corner extends StatelessWidget {
-  const _Corner({
-    required this.size,
-    required this.thickness,
-    required this.color,
-    required this.top,
-    required this.left,
-  });
-
-  final double size;
-  final double thickness;
-  final Color color;
-  final bool top;
-  final bool left;
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-        width: size,
-        height: size,
-        child: CustomPaint(
-          painter: _CornerPainter(
-              thickness: thickness, color: color, top: top, left: left),
+  Widget _buildPreview() {
+    if (_initError != null) {
+      return ColoredBox(
+        color: const Color(0xFF0A0A0D),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Text(
+              _initError!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+          ),
         ),
       );
-}
+    }
 
-class _CornerPainter extends CustomPainter {
-  _CornerPainter({
-    required this.thickness,
-    required this.color,
-    required this.top,
-    required this.left,
-  });
+    if (!_initialized || _controller == null) {
+      return const ColoredBox(
+        color: Color(0xFF0A0A0D),
+        child: Center(
+          child: CircularProgressIndicator(
+            color: Colors.white54,
+            strokeWidth: 2,
+          ),
+        ),
+      );
+    }
 
-  final double thickness;
-  final Color color;
-  final bool top;
-  final bool left;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = thickness
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-
-    final x = left ? 0.0 : size.width;
-    final y = top ? 0.0 : size.height;
-
-    canvas.drawLine(
-      Offset(x, y),
-      Offset(left ? size.width : 0, y),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(x, y),
-      Offset(x, top ? size.height : 0),
-      paint,
+    // Fill the screen regardless of preview aspect ratio.
+    return ClipRect(
+      child: OverflowBox(
+        alignment: Alignment.center,
+        child: FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: _controller!.value.previewSize!.height,
+            height: _controller!.value.previewSize!.width,
+            child: CameraPreview(_controller!),
+          ),
+        ),
+      ),
     );
   }
 
-  @override
-  bool shouldRepaint(_CornerPainter old) => false;
+  Widget _buildTopBar(BuildContext context) {
+    final cubit = context.read<AgeVerificationCubit>();
+
+    return SafeArea(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+          child: Row(
+            children: [
+              _GlassButton(
+                icon: Icons.close,
+                onTap: () => cubit.proceed(widget.docType),
+              ),
+              const Spacer(),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.45),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.12),
+                  ),
+                ),
+                child: Text(
+                  '${widget.docType.label} · ${widget.docType.hint}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              const SizedBox(width: 42), // balance the close button
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusChip(BuildContext context) {
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: MediaQuery.of(context).size.height * 0.28,
+      child: Center(
+        child: StatusChip(
+          label: _capturing
+              ? 'Processing…'
+              : 'Position document inside the frame',
+          icon: _capturing ? null : Icons.crop_free_outlined,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShutterCluster(BuildContext context) {
+    final flashOn = _controller?.value.flashMode == FlashMode.torch;
+
+    return SafeArea(
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(36, 0, 36, 36),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // Gallery fallback
+              _GlassButton(
+                icon: Icons.photo_library_outlined,
+                onTap: _capturing ? null : _pickFromGallery,
+              ),
+
+              // Shutter
+              CaptureButton(
+                onPressed: _capture,
+                loading: _capturing,
+              ),
+
+              // Torch toggle (helps in dim lighting)
+              _GlassButton(
+                icon: flashOn ? Icons.flash_on : Icons.flash_off_outlined,
+                onTap: _capturing ? null : _toggleFlash,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
+// ── Private widgets ───────────────────────────────────────────────────────────
+
 class _GlassButton extends StatelessWidget {
-  const _GlassButton({required this.icon, required this.onTap});
+  const _GlassButton({required this.icon, this.onTap});
 
   final IconData icon;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
         child: Container(
-          width: 40,
-          height: 40,
+          width: 42,
+          height: 42,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: Colors.black.withValues(alpha: 0.4),
+            color: Colors.black.withValues(alpha: 0.45),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.12),
+            ),
           ),
-          child: Icon(icon, color: Colors.white, size: 20),
+          child: Icon(
+            icon,
+            color: onTap != null ? Colors.white : Colors.white38,
+            size: 20,
+          ),
         ),
       );
 }
