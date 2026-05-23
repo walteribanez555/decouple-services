@@ -17,7 +17,9 @@
     "migrate:create": "ts-node --project migrations/tsconfig.json migrations/create.ts",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
   },
   "keywords": [],
   "author": "",
@@ -35,11 +37,14 @@
     "@aws-sdk/s3-request-presigner": "^3.1053.0",
     "@eslint/js": "^10.0.1",
     "@types/aws-lambda": "^8.10.161",
+    "@types/jest": "^30.0.0",
     "@types/node": "^25.6.0",
     "@types/pg": "^8.20.0",
     "esbuild": "^0.28.0",
     "eslint": "^10.2.0",
+    "jest": "^30.4.2",
     "nodemon": "^3.1.14",
+    "ts-jest": "^29.4.11",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.58.1"

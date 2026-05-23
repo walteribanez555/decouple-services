@@ -37,6 +37,26 @@ export interface BedrockInvokeInput {
   temperature?: number;
 }
 
+// ─── Token usage ──────────────────────────────────────────────────────────────
+
+/** Raw token counts as reported by the model. */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+// ─── Invoke output ────────────────────────────────────────────────────────────
+
+/** What `BedrockService.invoke()` returns to callers. */
+export interface BedrockInvokeOutput {
+  /** Plain-text model response (markdown fences already stripped). */
+  text: string;
+  /** Token counts for this call — use for cost attribution. */
+  usage: TokenUsage;
+  /** The resolved model ID that was actually used (adapter default or override). */
+  modelId: string;
+}
+
 // ─── Adapter contract ─────────────────────────────────────────────────────────
 
 export interface IBedrockAdapter {
@@ -54,4 +74,10 @@ export interface IBedrockAdapter {
    * The body has already been JSON-parsed before this is called.
    */
   parseResponse(responseBody: unknown): string;
+
+  /**
+   * Extract token usage from the model's raw response body.
+   * The body has already been JSON-parsed before this is called.
+   */
+  parseUsage(responseBody: unknown): TokenUsage;
 }

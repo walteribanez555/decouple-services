@@ -33,6 +33,16 @@ export interface PresignResponse {
   expiresIn: number;
 }
 
+// ── Pre-check response (gate #1) ─────────────────────────────────────────────
+
+/** Minimal shape returned by the pre-check Bedrock call. */
+export interface PreCheckResult {
+  /** True only when the image clearly shows a government-issued ID. */
+  is_identity_document: boolean;
+  /** Model confidence 0.0 – 1.0 for the classification. */
+  confidence: number;
+}
+
 // ── Bedrock response ──────────────────────────────────────────────────────────
 
 export interface DocumentAnalysis {
@@ -67,10 +77,35 @@ export type RejectedReason =
   | 'low_confidence'
   | 'poor_image_quality';
 
+// ── Cost attribution ──────────────────────────────────────────────────────────
+
+/** Token counts + USD cost for one Bedrock invocation. */
+export interface InvocationCost {
+  inputTokens: number;
+  outputTokens: number;
+  /** Calculated cost in USD for this single call. 0 when the model is unknown. */
+  costUsd: number;
+}
+
+/** Aggregated cost across both gates of a single `verify()` call. */
+export interface VerificationCost {
+  /** Cost of gate #1 — pre-check (always present). */
+  preCheck: InvocationCost;
+  /**
+   * Cost of gate #2 — full analysis.
+   * `null` when the pre-check rejected the image (full analysis was skipped).
+   */
+  analysis: InvocationCost | null;
+  /** Sum of all calls in USD. */
+  totalCostUsd: number;
+}
+
 export interface VerificationResult {
   sessionId: string;
   approved: boolean;
   details: VerificationDetails;
   /** Empty when approved; one or more codes when rejected. */
   rejectedReasons: RejectedReason[];
+  /** Token usage and USD cost for every Bedrock call made during this verification. */
+  cost: VerificationCost;
 }

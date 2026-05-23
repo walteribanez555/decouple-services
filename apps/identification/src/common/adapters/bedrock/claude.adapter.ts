@@ -16,6 +16,7 @@
 import type {
   BedrockInvokeInput,
   IBedrockAdapter,
+  TokenUsage,
 } from './bedrock-adapter.interface';
 
 export class ClaudeAdapter implements IBedrockAdapter {
@@ -58,5 +59,19 @@ export class ClaudeAdapter implements IBedrockAdapter {
       .replace(/^```\s*/i, '')
       .replace(/\s*```$/i, '')
       .trim();
+  }
+
+  /**
+   * Claude response shape:
+   *   { usage: { input_tokens: number; output_tokens: number } }
+   */
+  parseUsage(responseBody: unknown): TokenUsage {
+    const body = responseBody as {
+      usage: { input_tokens: number; output_tokens: number };
+    };
+    return {
+      inputTokens: body.usage.input_tokens,
+      outputTokens: body.usage.output_tokens,
+    };
   }
 }

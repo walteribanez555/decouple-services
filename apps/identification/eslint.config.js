@@ -5,6 +5,7 @@ const tseslint = require('typescript-eslint');
 module.exports = tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
+  // ── Production source ────────────────────────────────────────────────────────
   {
     languageOptions: {
       parserOptions: {
@@ -16,6 +17,18 @@ module.exports = tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports' }],
+    },
+  },
+  // ── Test files ───────────────────────────────────────────────────────────────
+  // Uses tsconfig.test.json which includes __tests__ dirs and jest globals.
+  // Overrides the project pointer from the block above for matched files.
+  {
+    files: ['src/**/__tests__/**/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        project: './tsconfig.test.json',
+        tsconfigRootDir: __dirname,
+      },
     },
   },
   {

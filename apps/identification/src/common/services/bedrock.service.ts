@@ -14,7 +14,7 @@
  */
 
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
-import type { IBedrockAdapter, BedrockInvokeInput } from '../adapters/bedrock/bedrock-adapter.interface';
+import type { IBedrockAdapter, BedrockInvokeInput, BedrockInvokeOutput } from '../adapters/bedrock/bedrock-adapter.interface';
 import { BaseService } from './base.service';
 
 export class BedrockService extends BaseService {
@@ -31,9 +31,9 @@ export class BedrockService extends BaseService {
    * @param input   - Model-agnostic prompt, optional images, and generation params.
    * @param modelId - Override the adapter's default model ID (e.g. to switch
    *                  between Sonnet and Haiku per call-site).
-   * @returns The plain-text response from the model (markdown fences stripped).
+   * @returns Text response, token usage, and the resolved model ID.
    */
-  async invoke(input: BedrockInvokeInput, modelId?: string): Promise<string> {
+  async invoke(input: BedrockInvokeInput, modelId?: string): Promise<BedrockInvokeOutput> {
     const resolvedModelId = modelId ?? this.adapter.defaultModelId;
 
     this.logger.debug('Invoking Bedrock model', { modelId: resolvedModelId });
@@ -50,9 +50,16 @@ export class BedrockService extends BaseService {
     );
 
     const responseBody = JSON.parse(Buffer.from(res.body).toString());
-    const text = this.adapter.parseResponse(responseBody);
+    const text  = this.adapter.parseResponse(responseBody);
+    const usage = this.adapter.parseUsage(responseBody);
 
-    this.logger.debug('Bedrock response received', { modelId: resolvedModelId, length: text.length });
-    return text;
+    this.logger.debug('Bedrock response received', {
+      modelId: resolvedModelId,
+      length: text.length,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+    });
+
+    return { text, usage, modelId: resolvedModelId };
   }
 }

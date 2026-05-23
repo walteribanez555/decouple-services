@@ -28,6 +28,7 @@ import type {
   BedrockImageInput,
   BedrockInvokeInput,
   IBedrockAdapter,
+  TokenUsage,
 } from './bedrock-adapter.interface';
 
 // ─── Nova-specific types ──────────────────────────────────────────────────────
@@ -97,6 +98,18 @@ export class NovaAdapter implements IBedrockAdapter {
       .replace(/^```\s*/i,      '')
       .replace(/\s*```$/i,      '')
       .trim();
+  }
+
+  /**
+   * Nova response shape:
+   *   { usage: { inputTokens: number; outputTokens: number } }
+   */
+  parseUsage(responseBody: unknown): TokenUsage {
+    const body = responseBody as { usage: { inputTokens: number; outputTokens: number } };
+    return {
+      inputTokens: body.usage.inputTokens,
+      outputTokens: body.usage.outputTokens,
+    };
   }
 
   // ─── Private helpers ────────────────────────────────────────────────────────

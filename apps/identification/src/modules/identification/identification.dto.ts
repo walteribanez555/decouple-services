@@ -44,6 +44,25 @@ export interface VerificationDetailsDto {
   dob: string;
 }
 
+export interface InvocationCostDto {
+  inputTokens: number;
+  outputTokens: number;
+  /** USD cost for this single Bedrock call. */
+  costUsd: number;
+}
+
+export interface VerificationCostDto {
+  /** Cost of gate #1 — pre-check (always present). */
+  preCheck: InvocationCostDto;
+  /**
+   * Cost of gate #2 — full analysis.
+   * `null` when the pre-check rejected the image and the full analysis was skipped.
+   */
+  analysis: InvocationCostDto | null;
+  /** Total USD cost across all Bedrock calls made during this verification. */
+  totalCostUsd: number;
+}
+
 export interface VerificationResponseDto {
   sessionId: string;
   /** True only when ALL checks pass. */
@@ -51,6 +70,8 @@ export interface VerificationResponseDto {
   details: VerificationDetailsDto;
   /** Empty when approved; one or more rejection codes when not. */
   rejectedReasons: RejectedReason[];
+  /** Token usage and USD cost for every Bedrock call made during this verification. */
+  cost: VerificationCostDto;
 }
 
 // ── Error ─────────────────────────────────────────────────────────────────────
