@@ -32,13 +32,14 @@ app.use('*', cors({
 
 app.get('/', (c) => {
   logger.info('Root request info');
-  return c.json({ message: 'Hello from service lambda' });
+  return c.json({ message: 'Hello from serverless' });
 });
 
 const v1 = new Hono();
 
 v1.get('/health', (c) => {
   logger.info('Health check');
+
   return c.json({ status: 'ok' });
 });
 
