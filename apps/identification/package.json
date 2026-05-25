@@ -27,7 +27,7 @@
   "type": "commonjs",
   "dependencies": {
     "@hono/node-server": "^2.0.3",
-    "hono": "^4.6.0",
+    "hono": "^4.12.23",
     "pg": "^8.20.0"
   },
   "devDependencies": {
